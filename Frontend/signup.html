@@ -1,0 +1,166 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sign Up</title>
+
+<style>
+*{
+    margin:0;
+    padding:0;
+    box-sizing:border-box;
+    font-family:'Segoe UI',sans-serif;
+}
+
+
+body{
+    height:100vh;
+    display:flex;
+    justify-content:center;
+    align-items:center;
+    background:linear-gradient(135deg,#5865F2,#000000);
+    color:white;
+}
+
+
+.container{
+    background:rgba(255,255,255,0.1);
+    backdrop-filter:blur(10px);
+    padding:30px;
+    border-radius:20px;
+    width:320px;
+    text-align:center;
+}
+
+
+h2{
+    margin-bottom:20px;
+}
+
+
+input{
+    width:100%;
+    padding:12px;
+    margin:10px 0;
+    border:none;
+    border-radius:10px;
+    background:rgba(255,255,255,0.2);
+    color:white;
+}
+
+
+button{
+    width:100%;
+    padding:12px;
+    margin-top:10px;
+    border:none;
+    border-radius:10px;
+    background:#5865F2;
+    color:white;
+    cursor:pointer;
+}
+
+
+.link{
+    margin-top:15px;
+    font-size:14px;
+}
+
+.link a{
+    color:#00ffcc;
+    text-decoration:none;
+}
+</style>
+
+</head>
+
+<body>
+
+<div class="container">
+
+    <h2>Create Account</h2>
+
+   
+    <input type="text" id="name"placeholder="Full Name">
+
+   
+    <input type="email" id="email" placeholder="Email">
+
+   
+    <input type="password" id="password" placeholder="Password">
+
+   
+    <input type="password" id="confirmPassword" placeholder="Confirm Password">
+
+   
+    <button onclick="signup()">Create Account</button>
+
+  
+    <div class="link">
+        Already have an account? <a href="login.html">Login</a>
+    </div>
+
+</div>
+<script>
+const APP_BASE = "http://localhost:5001";
+
+async function signup(){
+  
+    let name = document.getElementById("name").value;
+    let email = document.getElementById("email").value;
+    let password = document.getElementById("password").value;
+    let confirmPassword = document.getElementById("confirmPassword").value;
+
+    name = name.trim();
+    email = email.trim();
+
+ 
+    if(name === "" || email === "" || password === "" || confirmPassword === ""){
+        alert("Please fill all fields");
+        return;
+    }
+
+    const emailRegex = /^\S+@\S+\.\S+$/;
+    if (!emailRegex.test(email)) {
+        alert("Enter a valid email address");
+        return;
+    }
+
+    const strongPasswordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/;
+    if (!strongPasswordRegex.test(password)) {
+        alert("Password must be 8+ chars with upper, lower and number");
+        return;
+    }
+
+   
+    if(password !== confirmPassword){
+        alert("Passwords do not match");
+        return;
+    }
+
+    try{
+        const res=await fetch(`${APP_BASE}/signup`,{
+            method:"POST",
+            headers:{
+                "Content-Type":"application/json"
+            },
+            body:JSON.stringify({name,email,password})
+        });
+        const data = await res.json();
+        if (data.message === "Signup successful") {
+            alert("Signup successful! Redirecting to login...");
+            window.location.href = `${APP_BASE}/login.html`;
+        } else {
+            alert(data.message || "Signup failed");
+        }
+    } catch (err) {
+        alert("Error connecting to server");
+    }
+}
+</script>
+
+</body>
+</html>
+

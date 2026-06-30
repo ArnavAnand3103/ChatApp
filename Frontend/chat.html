@@ -1,0 +1,1170 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Premium Chat Console</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        :root {
+            --primary-bg: #1a1a1a;
+            --sidebar-bg: rgba(25, 25, 25, 0.95);
+            --chat-bg: #121212;
+            --accent-blue: #5865F2;
+            --accent-green: #2ecc71;
+            --accent-red: #e74c3c;
+            --text-color: #ffffff;
+            --text-muted: #8e9297;
+            --bubble-me: #5865F2;
+            --bubble-other: #2f3136;
+        }
+
+        body {
+            background-color: var(--primary-bg);
+            color: var(--text-color);
+            height: 100vh;
+            display: flex;
+            overflow: hidden;
+        }
+        .light-mode{
+            background:white;
+            color:black;
+        }
+        .light-mode.chat-box{
+            background:#f5f5f5;
+        }
+
+        body[data-theme="light"] {
+            --primary-bg: #f0f2f5;
+            --sidebar-bg: rgba(255, 255, 255, 0.95);
+            --chat-bg: #ffffff;
+            --text-color: #1f2937;
+            --text-muted: #6b7280;
+            --bubble-me: #2563eb;
+            --bubble-other: #e5e7eb;
+        }
+
+        /* Sidebar Styles */
+        .sidebar {
+            width: 320px;
+            background: var(--sidebar-bg);
+            backdrop-filter: blur(15px);
+            border-right: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            flex-direction: column;
+            z-index: 10;
+        }
+
+        .sidebar-header {
+            padding: 24px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .sidebar-header h2 {
+            font-size: 22px;
+            font-weight: 700;
+            margin-bottom: 15px;
+            letter-spacing: 0.5px;
+        }
+
+        .search-container {
+            position: relative;
+        }
+
+        .search-container input {
+            width: 100%;
+            padding: 10px 15px;
+            padding-left: 35px;
+            border-radius: 8px;
+            border: none;
+            background: rgba(255, 255, 255, 0.08);
+            color: white;
+            outline: none;
+        }
+
+        .friend-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px 0;
+        }
+
+        .friend-list::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .friend-list::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 2px;
+        }
+
+        .friend {
+            display: flex;
+            align-items: center;
+            padding: 15px 20px;
+            cursor: pointer;
+            transition: 0.2s;
+            position: relative;
+        }
+
+        .friend:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .friend.active {
+            background: rgba(88, 101, 242, 0.15);
+            border-left: 3px solid var(--accent-blue);
+        }
+
+        .avatar-container {
+            position: relative;
+            margin-right: 15px;
+        }
+
+        .avatar {
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #5865F2, #a033ff);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 18px;
+            color: white;
+        }
+
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #95a5a6;
+            position: absolute;
+            bottom: 2px;
+            right: 2px;
+            border: 2px solid var(--primary-bg);
+        }
+
+        .status-dot.online {
+            background: var(--accent-green);
+        }
+
+        .friend-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .friend-name {
+            font-weight: 600;
+            font-size: 15px;
+            margin-bottom: 4px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .friend-last-msg {
+            font-size: 13px;
+            color: var(--text-muted);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .unread-badge {
+            background: var(--accent-blue);
+            color: white;
+            min-width: 20px;
+            height: 20px;
+            border-radius: 10px;
+            padding: 0 6px;
+            font-size: 11px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            margin-left: 5px;
+        }
+
+        /* Chat Main Area Styles */
+        .chat-main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background-color: var(--chat-bg);
+            position: relative;
+        }
+
+        .chat-header {
+            padding: 15px 30px;
+            background: rgba(0, 0, 0, 0.2);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .header-user {
+            display: flex;
+            align-items: center;
+        }
+
+        .header-info {
+            margin-left: 15px;
+        }
+
+        .header-name {
+            font-weight: 700;
+            font-size: 16px;
+        }
+
+        .typing-indicator {
+            font-size: 13px;
+            color: var(--accent-green);
+            margin-top: 4px;
+            display: none;
+            align-items: center;
+            gap: 4px;
+            font-weight: 500;
+        }
+
+        .dot-container {
+            display: flex;
+            gap: 3px;
+        }
+
+        .dot {
+            width: 5px;
+            height: 5px;
+            background: var(--accent-green);
+            border-radius: 50%;
+            animation: bounce 1s infinite ease-in-out;
+        }
+
+        .dot:nth-child(2) { animation-delay: 0.2s; }
+        .dot:nth-child(3) { animation-delay: 0.4s; }
+
+        @keyframes bounce {
+            0%, 80%, 100% { transform: translateY(0); }
+            40% { transform: translateY(-5px); }
+        }
+
+        .header-actions button {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            margin-left: 15px;
+            font-size: 14px;
+            transition: 0.2s;
+        }
+
+        .header-actions button:hover {
+            color: var(--text-color);
+        }
+
+        .delete-btn:hover {
+            color: var(--accent-red) !important;
+        }
+
+        /* Message Area */
+        .messages-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 30px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .messages-container::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .messages-container::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 3px;
+        }
+
+        .message {
+            max-width: 65%;
+            padding: 12px 18px;
+            border-radius: 18px;
+            font-size: 14px;
+            line-height: 1.4;
+            position: relative;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .message.me {
+            background: var(--bubble-me);
+            color: white;
+            align-self: flex-end;
+            border-bottom-right-radius: 4px;
+        }
+
+        .message.other {
+            background: var(--bubble-other);
+            color: var(--text-color);
+            align-self: flex-start;
+            border-bottom-left-radius: 4px;
+        }
+
+        .msg-time {
+            font-size: 10px;
+            color: rgba(255, 255, 255, 0.5);
+            margin-top: 5px;
+            text-align: right;
+        }
+
+        /* Input Area */
+        .input-bar {
+            padding: 20px 30px;
+            background: rgba(0, 0, 0, 0.2);
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .input-bar input {
+            flex: 1;
+            padding: 14px 20px;
+            border-radius: 25px;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            color: white;
+            outline: none;
+            font-size: 15px;
+            transition: 0.3s;
+        }
+
+        .input-bar input:focus {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: var(--accent-blue);
+        }
+
+        .send-btn {
+            background: var(--accent-blue);
+            width: 45px;
+            height: 45px;
+            border-radius: 50%;
+            border: none;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: 0.3s;
+            flex-shrink: 0;
+        }
+
+        .send-btn:hover {
+            transform: scale(1.1) rotate(-5deg);
+            background: #4752c4;
+        }
+
+        /* Empty State */
+        .empty-chat {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-muted);
+            text-align: center;
+        }
+
+        .empty-chat h3 {
+            color: white;
+            margin-bottom: 10px;
+        }
+
+        /* Notification Toast (Optional) */
+        #toast {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 25px;
+            background: var(--accent-blue);
+            color: white;
+            border-radius: 10px;
+            transform: translateX(120%);
+            transition: 0.4s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            z-index: 1000;
+        }
+
+        #mediaZoomOverlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.86);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 2500;
+            padding: 24px;
+        }
+
+        #mediaZoomOverlay.active {
+            display: flex;
+        }
+
+        #mediaZoomImage {
+            max-width: min(92vw, 1200px);
+            max-height: 88vh;
+            width: auto;
+            height: auto;
+            border-radius: 12px;
+            box-shadow: 0 16px 50px rgba(0, 0, 0, 0.55);
+        }
+
+        #mediaZoomClose {
+            position: absolute;
+            top: 16px;
+            right: 20px;
+            background: rgba(255, 255, 255, 0.14);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: #fff;
+            border-radius: 999px;
+            width: 36px;
+            height: 36px;
+            cursor: pointer;
+            font-size: 20px;
+            line-height: 1;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="toast">New message...</div>
+    <div id="mediaZoomOverlay" onclick="closeMediaZoom(event)">
+        <button id="mediaZoomClose" aria-label="Close" onclick="closeMediaZoom(event)">×</button>
+        <img id="mediaZoomImage" alt="Zoomed media">
+    </div>
+
+    <div class="sidebar">
+        <div class="sidebar-header">
+            <h2>Chats</h2>
+            <div class="search-container">
+                <input type="text" id="userSearch" placeholder="Search friends..." onkeyup="searchUsers()">
+            </div>
+        </div>
+        <div class="friend-list" id="friendList">
+            <!-- Dynamic Users Here -->
+        </div>
+    </div>
+
+    <div class="chat-main" id="chatArea">
+        <div class="empty-chat" id="emptyState">
+            <h3>Welcome to Project2 Chat</h3>
+            <p>Select a friend from the sidebar to start a secure conversation.</p>
+        </div>
+
+        <div id="activeChat" style="display: none; height: 100%; flex-direction: column;">
+            <div class="chat-header">
+                <div class="header-user">
+                    <div class="avatar" id="headerAvatar">?</div>
+                    <div class="header-info">
+                        <div class="header-name" id="headerName">Select User</div>
+                        <div id="headerStatus" style="font-size: 13px; color: var(--text-muted); margin-top: 4px; font-weight: 500;">Offline</div>
+                        <div class="typing-indicator" id="typingIndicator">
+                            <div class="dot-container">
+                                <div class="dot"></div>
+                                <div class="dot"></div>
+                                <div class="dot"></div>
+                            </div>
+                            <span>typing...</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="header-actions">
+                    <button onclick="toggleTheme()">Theme</button>
+                    <button onclick="openPhotoPicker()">Photo</button>
+                    <button onclick="showAnalytics()">Analytics</button>
+                    <button id="blockBtn" onclick="toggleBlock()">Block</button>
+                    <button class="delete-btn" onclick="deleteHistory()">Delete History</button>
+                    <button onclick="logout()">Logout</button>
+                </div>
+            </div>
+
+            <div class="messages-container" id="messagesBox">
+                <!-- Messages Here -->
+            </div>
+
+            <div class="input-bar">
+                <button class="send-btn" title="Send image" onclick="openMediaPicker()">+</button>
+                <input type="text" id="msgInput" placeholder="Write a message..." onkeypress="handleKeyPress(event)"
+                    oninput="notifyTyping()">
+                <button class="send-btn" onclick="sendMessage()">➤</button>
+            </div>
+            <div id="msgStatus" style="padding: 0 30px 14px; color: var(--text-muted); font-size: 12px; min-height: 20px;"></div>
+        </div>
+    </div>
+
+    <input type="file" id="photoInput" accept="image/*" style="display: none;" onchange="uploadProfilePhoto(event)">
+    <input type="file" id="mediaInput" accept="image/*,video/*" style="display: none;" onchange="sendMedia(event)">
+
+    <script>
+        const APP_BASE = "http://localhost:5001";
+        const user = JSON.parse(sessionStorage.getItem("user") || localStorage.getItem("user") || "null");
+        const token = sessionStorage.getItem("token") || localStorage.getItem("token") || "";
+        const socket = io(APP_BASE, {
+            auth: { token }
+        });
+        const tabSync = new BroadcastChannel("project2-chat-sync");
+        
+        if (!user || !token) {
+            window.location.href = `${APP_BASE}/login.html`;
+        }
+
+        const authHeaders = {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`
+        };
+
+        const getAuthToken = () => sessionStorage.getItem("token") || localStorage.getItem("token") || token || socket.auth?.token || "";
+
+        const normalizeEmail = (e) => String(e || "").trim().toLowerCase();
+
+        let selectedUser = null;
+        let unreadCounts = {};
+        let onlineUsers = new Set();
+        let userStatusMap = {}; // { email: { status, lastSeen } }
+        let typingTimeout = null;
+        let lastNotifyTime = 0;
+        let messageStatusMap = {};
+        let renderedMessageIds = new Set();
+
+        const getClientMessageId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+        // Initial Setup
+        document.addEventListener("DOMContentLoaded", () => {
+            const savedTheme = localStorage.getItem("chatTheme") || "dark";
+            document.body.setAttribute("data-theme", savedTheme);
+
+            if ("Notification" in window && Notification.permission === "default") {
+                Notification.requestPermission().catch(() => { });
+            }
+
+            socket.emit("join", user);
+            fetchFriends();
+        });
+
+        tabSync.onmessage = (event) => {
+            const payload = event.data;
+            if (!payload || payload.sourceTab === window.name) return;
+
+            if (payload.type === "logout") {
+                window.location.href = `${APP_BASE}/login.html`;
+                return;
+            }
+
+            if (payload.type === "incoming" && payload.message) {
+                const data = payload.message;
+                const messageKey = data._id || data.clientMessageId;
+                if (messageKey && renderedMessageIds.has(messageKey)) return;
+                
+                handleIncomingMessage(data, true);
+            }
+        };
+
+        if (!window.name) {
+            window.name = `tab-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        }
+
+        // --- Socket Handlers ---
+
+        socket.on("onlineUsers", (list) => {
+            onlineUsers = new Set(list);
+            renderUsers();
+        });
+
+        socket.on("userStatus", ({ email, status, lastSeen }) => {
+            const normalizedEmail = normalizeEmail(email);
+            userStatusMap[normalizedEmail] = { status, lastSeen };
+            if (status === "online") onlineUsers.add(normalizedEmail);
+            else onlineUsers.delete(normalizedEmail);
+            renderUsers();
+            
+            // Update header if this is the selected user
+            if (selectedUser && normalizeEmail(selectedUser.email) === normalizedEmail) {
+                updateHeaderStatus(normalizedEmail);
+            }
+        });
+
+        socket.on("receiveMessage", (data) => {
+            handleIncomingMessage(data, false);
+
+            tabSync.postMessage({
+                type: "incoming",
+                sourceTab: window.name,
+                message: data
+            });
+        });
+
+        socket.on("showTyping", ({ from }) => {
+            const fromEmail = normalizeEmail(from);
+            const currentSelectedEmail = selectedUser ? normalizeEmail(selectedUser.email) : null;
+
+            // Only show typing if user is currently selected AND online
+            if (currentSelectedEmail === fromEmail && onlineUsers.has(fromEmail)) {
+                document.getElementById("typingIndicator").style.display = "flex";
+            } else {
+                // Hide if typing is from a different user or offline user
+                document.getElementById("typingIndicator").style.display = "none";
+            }
+        });
+
+        socket.on("hideTyping", ({ from }) => {
+            const fromEmail = normalizeEmail(from);
+            const currentSelectedEmail = selectedUser ? normalizeEmail(selectedUser.email) : null;
+
+            // Hide typing indicator if it was from the current chat
+            if (currentSelectedEmail === fromEmail) {
+                document.getElementById("typingIndicator").style.display = "none";
+            }
+        });
+
+        socket.on("blockStatus", ({ blocked }) => {
+            const btn = document.getElementById("blockBtn");
+            btn.innerText = blocked ? "Unblock" : "Block";
+            btn.style.color = blocked ? "var(--accent-red)" : "var(--text-muted)";
+        });
+
+        socket.on("messageStatus", ({ ok, message, status, clientMessageId }) => {
+            if (clientMessageId) {
+                messageStatusMap[clientMessageId] = status || (ok ? "delivered" : "failed");
+                updateMessageStatusInDom(clientMessageId, messageStatusMap[clientMessageId]);
+            }
+
+            document.getElementById("msgStatus").textContent = message;
+            if (!ok) {
+                alert(message);
+            }
+        });
+
+        socket.on("chatDeleted", ({ withUser }) => {
+            if (selectedUser && selectedUser.email === withUser) {
+                document.getElementById("messagesBox").innerHTML = "";
+                appendMessage("<i>Chat history cleared.</i>", "other");
+            }
+        });
+
+        // --- UI Functions ---
+
+        function handleIncomingMessage(data, isFromTabSync) {
+            const hasId = data._id && renderedMessageIds.has(String(data._id));
+            const hasClientId = data.clientMessageId && renderedMessageIds.has(String(data.clientMessageId));
+
+            if (hasId || hasClientId) {
+                return;
+            }
+
+            if (data._id) renderedMessageIds.add(String(data._id));
+            if (data.clientMessageId) renderedMessageIds.add(String(data.clientMessageId));
+
+            const fromEmail = normalizeEmail(data.fromEmail);
+            const currentSelectedEmail = selectedUser ? normalizeEmail(selectedUser.email) : null;
+            const isFromMe = fromEmail === normalizeEmail(user.email) || !!data.fromSelf;
+
+            if (data.clientMessageId && data.status) {
+                messageStatusMap[data.clientMessageId] = data.status;
+            }
+
+            if (isFromMe) {
+                if (currentSelectedEmail === normalizeEmail(data.toEmail)) {
+                    appendMessage(data.message, "me", data.createdAt, data.messageType, data.mediaUrl, data.clientMessageId);
+                }
+                return;
+            }
+
+            if (currentSelectedEmail === fromEmail) {
+                appendMessage(data.message, "other", data.createdAt, data.messageType, data.mediaUrl, data.clientMessageId);
+            } else {
+                unreadCounts[data.fromEmail] = (unreadCounts[data.fromEmail] || 0) + 1;
+                showToast(`New message from ${data.user || data.fromEmail}`);
+                if (!isFromTabSync && document.hidden && "Notification" in window && Notification.permission === "granted") {
+                    new Notification(`Message from ${data.user || data.fromEmail}`, {
+                        body: data.messageType === "media" ? "Sent a media message" : data.message
+                    });
+                }
+                renderUsers();
+            }
+        }
+
+        async function fetchFriends() {
+            try {
+                const res = await fetch(`${APP_BASE}/search`, {
+                    headers: {
+                        "Authorization": `Bearer ${token}`
+                    }
+                });
+                const friends = await res.json();
+                renderUsers(friends);
+
+                // Auto-select previous friend or default to first available friend
+                const lastFriendStr = sessionStorage.getItem("lastSelectedFriend");
+                if (lastFriendStr) {
+                    const lastFriend = JSON.parse(lastFriendStr);
+                    const exists = friends.find(f => f.email === lastFriend.email);
+                    if (exists) {
+                        await selectFriend(exists);
+                        return;
+                    }
+                }
+
+                // Default to first available friend
+                const availableFriends = friends.filter(f => f.email !== user.email);
+                if (availableFriends.length > 0) {
+                        await selectFriend(availableFriends[0]);
+                }
+            } catch (err) {
+                console.error("Failed to fetch friends", err);
+            }
+        }
+
+        async function searchUsers() {
+            const q = document.getElementById("userSearch").value;
+            try {
+                const res = await fetch(`${APP_BASE}/search?q=${encodeURIComponent(q)}`, {
+                    headers: {
+                        "Authorization": `Bearer ${token}`
+                    }
+                });
+                const data = await res.json();
+                renderUsers(data);
+            } catch (err) { }
+        }
+
+        function renderUsers(list = []) {
+            const listEl = document.getElementById("friendList");
+            // If No list passed, we could store it globally
+            if (list.length === 0 && !document.getElementById("userSearch").value) {
+                // Optionally keep old list
+            } else if (list.length > 0) {
+                window.currentFriendList = list;
+            }
+
+            const friends = window.currentFriendList || [];
+            const normalizedUserEmail = normalizeEmail(user.email);
+            
+            listEl.innerHTML = friends
+                .filter(f => normalizeEmail(f.email) !== normalizedUserEmail)
+                .map(f => {
+                    const status = onlineUsers.has(normalizeEmail(f.email)) ? "online" : "offline";
+                    const unread = unreadCounts[f.email] || 0;
+                    const initials = f.name.substring(0, 2).toUpperCase();
+                    const activeClass = selectedUser && selectedUser.email === f.email ? "active" : "";
+                    
+                    let statusText = "Active now";
+                    if (status === "offline") {
+                        const userStatus = userStatusMap[normalizeEmail(f.email)];
+                        const absoluteLastSeen = userStatus?.lastSeen || f.lastSeen;
+                        if (absoluteLastSeen) {
+                            const lastSeenDate = new Date(absoluteLastSeen);
+                            const timeStr = lastSeenDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                            const dateStr = lastSeenDate.toLocaleDateString();
+                            statusText = `${timeStr}, ${dateStr}`;
+                        } else {
+                            statusText = "Offline";
+                        }
+                    }
+
+                    return `
+                    <div class="friend ${activeClass}" onclick='selectFriend(${JSON.stringify(f)})'>
+                        <div class="avatar-container">
+                            <div class="avatar">${initials}</div>
+                            <div class="status-dot ${status}"></div>
+                        </div>
+                        <div class="friend-info">
+                            <div class="friend-name">${f.name}</div>
+                            <div class="friend-last-msg">${statusText}</div>
+                        </div>
+                        ${unread > 0 ? `<div class="unread-badge">${unread}</div>` : ""}
+                    </div>
+                `;
+                }).join("");
+            
+            // Update header if a user is selected
+            if (selectedUser) {
+                updateHeaderStatus(selectedUser.email);
+            }
+        }
+
+        async function selectFriend(friend) {
+            // Stop typing notification for previous user
+            if (selectedUser) {
+                socket.emit("stopTyping", { to: selectedUser.email });
+            }
+            
+            selectedUser = friend;
+            sessionStorage.setItem("lastSelectedFriend", JSON.stringify(friend));
+            unreadCounts[friend.email] = 0;
+            
+            document.getElementById("emptyState").style.display = "none";
+            document.getElementById("activeChat").style.display = "flex";
+            document.getElementById("headerName").innerText = friend.name;
+            document.getElementById("headerAvatar").innerText = friend.name.substring(0, 2).toUpperCase();
+            
+            // Clear any old typing indicators and timeouts
+            document.getElementById("typingIndicator").style.display = "none";
+            if (typingTimeout) {
+                clearTimeout(typingTimeout);
+                typingTimeout = null;
+            }
+            
+            // Update header status
+            updateHeaderStatus(friend.email);
+
+            // Check block status
+            socket.emit("checkBlock", { me: user.email, other: friend.email });
+            
+            // Render list to update badges/active state
+            renderUsers();
+            
+            // Load messages
+            await loadMessages(friend.email);
+        }
+        
+        function updateHeaderStatus(friendEmail) {
+            const normalizedEmail = normalizeEmail(friendEmail);
+            const headerStatusEl = document.getElementById("headerStatus");
+            
+            if (!headerStatusEl) {
+                console.error("headerStatus element not found");
+                return;
+            }
+            
+            // Check status the exact same way as sidebar
+            const status = onlineUsers.has(normalizedEmail) ? "online" : "offline";
+            
+            if (status === "online") {
+                headerStatusEl.textContent = "Active now";
+                headerStatusEl.style.color = "var(--accent-green)";
+            } else {
+                // User is offline - show last seen with actual timestamp
+                const userStatus = userStatusMap[normalizedEmail];
+                const theLastSeen = userStatus?.lastSeen || (selectedUser && selectedUser.lastSeen ? selectedUser.lastSeen : null);
+                let statusText = "Offline";
+                
+                if (theLastSeen) {
+                    const lastSeenDate = new Date(theLastSeen);
+                    const timeStr = lastSeenDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                    const dateStr = lastSeenDate.toLocaleDateString();
+                    statusText = `Last seen - ${timeStr}, ${dateStr}`;
+                }
+                
+                headerStatusEl.textContent = statusText;
+                headerStatusEl.style.color = "var(--text-muted)";
+            }
+        }
+
+        async function loadMessages(targetEmail) {
+            const box = document.getElementById("messagesBox");
+            box.innerHTML = "<div style='text-align:center; color:gray;'>Loading history...</div>";
+            try {
+                const res = await fetch(`${APP_BASE}/messages?with=${encodeURIComponent(targetEmail)}`, {
+                    headers: {
+                        "Authorization": `Bearer ${token}`
+                    }
+                });
+                const msgs = await res.json();
+                box.innerHTML = "";
+                msgs.forEach(m => {
+                    if (m._id) renderedMessageIds.add(String(m._id));
+                    if (m.clientMessageId) renderedMessageIds.add(String(m.clientMessageId));
+                    
+                    if (m.clientMessageId || m._id) {
+                        messageStatusMap[m.clientMessageId || m._id] = m.status || "offline";
+                    }
+                    const type = m.from === user.email ? "me" : "other";
+                    appendMessage(m.message, type, m.createdAt, m.messageType, m.mediaUrl, m.clientMessageId || m._id);
+                });
+                box.scrollTop = box.scrollHeight;
+            } catch (err) {
+                box.innerHTML = "Failed to load messages.";
+            }
+        }
+
+        function appendMessage(text, type, time = new Date(), messageType = "text", mediaUrl = "", clientMessageId = "") {
+            const box = document.getElementById("messagesBox");
+            const div = document.createElement("div");
+            div.className = `message ${type}`;
+            if (clientMessageId) {
+                div.dataset.messageId = clientMessageId;
+            }
+            if (clientMessageId) {
+                div.dataset.messageId = clientMessageId;
+            }
+            
+            const dateStr = new Date(time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const statusText = clientMessageId && messageStatusMap[clientMessageId] ? ` • ${messageStatusMap[clientMessageId]}` : "";
+            const isVideo = typeof mediaUrl === "string" && mediaUrl.startsWith("data:video/");
+            const content = messageType === "media"
+                ? (isVideo
+                    ? `<video controls style="max-width: 240px; border-radius: 10px;"><source src="${mediaUrl}"></video>`
+                    : `<img src="${mediaUrl}" alt="media" onclick="openMediaZoom(this.src)" style="max-width: 240px; border-radius: 10px; cursor: zoom-in;"/>`)
+                : `<div>${text}</div>`;
+            
+            div.innerHTML = `
+                ${content}
+                <div class="msg-time">${dateStr}<span class="msg-status">${statusText}</span></div>
+            `;
+            box.appendChild(div);
+            box.scrollTop = box.scrollHeight;
+        }
+
+        function updateMessageStatusInDom(messageId, status) {
+            if (!messageId) return;
+            const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
+            if (!messageEl) return;
+
+            const statusEl = messageEl.querySelector(".msg-status");
+            if (!statusEl) return;
+
+            const safeStatus = String(status || "").trim();
+            statusEl.textContent = safeStatus ? ` • ${safeStatus}` : "";
+        }
+
+        async function saveMessageViaHttp({ to, message = "", messageType = "text", mediaUrl = "", clientMessageId = "" }) {
+            const liveToken = getAuthToken();
+            if (!liveToken) {
+                throw new Error("Missing auth token");
+            }
+
+            const res = await fetch(`${APP_BASE}/messages`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${liveToken}`
+                },
+                body: JSON.stringify({ to, message, messageType, mediaUrl, clientMessageId })
+            });
+
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data?.ok) {
+                throw new Error(data?.message || data?.error || `Failed to save message (${res.status})`);
+            }
+
+            return data.savedMessage || null;
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById("msgInput");
+            const msg = input.value.trim();
+            if (!msg || !selectedUser) return;
+
+            const clientMessageId = getClientMessageId();
+            messageStatusMap[clientMessageId] = "pending";
+
+            renderedMessageIds.add(clientMessageId);
+            appendMessage(msg, "me", new Date(), "text", "", clientMessageId);
+            input.value = "";
+            document.getElementById("msgStatus").textContent = "Sending...";
+
+            try {
+                const savedMessage = await saveMessageViaHttp({
+                    to: selectedUser.email,
+                    message: msg,
+                    messageType: "text",
+                    clientMessageId
+                });
+
+                messageStatusMap[clientMessageId] = savedMessage?.status || "delivered";
+                updateMessageStatusInDom(clientMessageId, messageStatusMap[clientMessageId]);
+                document.getElementById("msgStatus").textContent = "Sent";
+                socket.emit("stopTyping", { to: selectedUser.email });
+            } catch (err) {
+                messageStatusMap[clientMessageId] = "failed";
+                updateMessageStatusInDom(clientMessageId, "failed");
+                const errorMessage = err?.message || "Failed to save message";
+                document.getElementById("msgStatus").textContent = errorMessage;
+                alert(errorMessage);
+            }
+        }
+
+        function handleKeyPress(e) {
+            if (e.key === "Enter") sendMessage();
+        }
+
+        function openMediaZoom(src) {
+            if (!src) return;
+            const overlay = document.getElementById("mediaZoomOverlay");
+            const image = document.getElementById("mediaZoomImage");
+            image.src = src;
+            overlay.classList.add("active");
+            document.body.style.overflow = "hidden";
+        }
+
+        function closeMediaZoom(event) {
+            if (event && event.target && event.target.id && event.target.id !== "mediaZoomOverlay" && event.target.id !== "mediaZoomClose") {
+                return;
+            }
+            const overlay = document.getElementById("mediaZoomOverlay");
+            const image = document.getElementById("mediaZoomImage");
+            overlay.classList.remove("active");
+            image.src = "";
+            document.body.style.overflow = "hidden";
+            document.body.style.overflow = "";
+        }
+
+        function openPhotoPicker() {
+            document.getElementById("photoInput").click();
+        }
+
+        async function uploadProfilePhoto(event) {
+            const file = event.target.files?.[0];
+            if (!file) return;
+
+            if (!file.type.startsWith("image/")) {
+                alert("Please select an image file");
+                event.target.value = "";
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = async () => {
+                try {
+                    const photoData = String(reader.result || "");
+                    const res = await fetch(`${APP_BASE}/profile/photo`, {
+                        method: "POST",
+                        headers: authHeaders,
+                        body: JSON.stringify({ photoData })
+                    });
+                    const data = await res.json();
+
+                    if (!res.ok) {
+                        alert(data.message || "Failed to upload profile photo");
+                        return;
+                    }
+
+                    const photoEl = document.getElementById("myPhoto");
+                    if (photoEl) {
+                        photoEl.src = data?.user?.photo || photoData;
+                    }
+                    showToast("Profile photo updated");
+                } catch (err) {
+                    alert("Failed to upload profile photo");
+                } finally {
+                    event.target.value = "";
+                }
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function openMediaPicker() {
+            if (!selectedUser) {
+                alert("Select a friend first");
+                return;
+            }
+            document.getElementById("mediaInput").click();
+        }
+
+        function sendMedia(event) {
+            const file = event.target.files?.[0];
+            if (!file || !selectedUser) return;
+
+            const reader = new FileReader();
+            reader.onload = async () => {
+                const dataUrl = String(reader.result || "");
+                const clientMessageId = getClientMessageId();
+                messageStatusMap[clientMessageId] = "pending";
+
+                renderedMessageIds.add(clientMessageId);
+                appendMessage("", "me", new Date(), "media", dataUrl, clientMessageId);
+                document.getElementById("msgStatus").textContent = "Sending media...";
+
+                try {
+                    const savedMessage = await saveMessageViaHttp({
+                        to: selectedUser.email,
+                        messageType: "media",
+                        mediaUrl: dataUrl,
+                        clientMessageId
+                    });
+
+                    messageStatusMap[clientMessageId] = savedMessage?.status || "delivered";
+                    updateMessageStatusInDom(clientMessageId, messageStatusMap[clientMessageId]);
+                    document.getElementById("msgStatus").textContent = "Sent";
+                } catch (err) {
+                    messageStatusMap[clientMessageId] = "failed";
+                    updateMessageStatusInDom(clientMessageId, "failed");
+                    const errorMessage = err?.message || "Failed to save media";
+                    document.getElementById("msgStatus").textContent = errorMessage;
+                    alert(errorMessage);
+                }
+            };
+            reader.readAsDataURL(file);
+            event.target.value = "";
+        }
+
+        function notifyTyping() {
+            if (!selectedUser) return;
+            
+            const now = Date.now();
+            if (now - lastNotifyTime > 500) { // Throttled but very fast
+                socket.emit("typing", { to: selectedUser.email });
+                lastNotifyTime = now;
+            }
+
+            clearTimeout(typingTimeout);
+            typingTimeout = setTimeout(() => {
+                socket.emit("stopTyping", { to: selectedUser.email });
+            }, 1500); // Stop faster if the user remains inactive
+        }
+
+        function toggleBlock() {
+            if (!selectedUser) return;
+            socket.emit("toggleBlock", { me: user.email, other: selectedUser.email });
+        }
+
+        function deleteHistory() {
+            if (!selectedUser) return;
+            if (confirm("Are you sure you want to delete this chat history for both users?")) {
+                socket.emit("deleteChat", { me: user.email, withUser: selectedUser.email });
+                document.getElementById("messagesBox").innerHTML = "";
+            }
+        }
+
+        function showToast(msg) {
+            const t = document.getElementById("toast");
+            t.innerText = msg;
+            t.style.transform = "translateX(0)";
+            setTimeout(() => {
+                t.style.transform = "translateX(120%)";
+            }, 3000);
+        }
+        function toggleTheme() {
+            const currentTheme = document.body.getAttribute("data-theme") || "dark";
+            const nextTheme = currentTheme === "light" ? "dark" : "light";
+            document.body.setAttribute("data-theme", nextTheme);
+            localStorage.setItem("chatTheme", nextTheme);
+        }
+
+        function logout() {
+            sessionStorage.removeItem("user");
+            sessionStorage.removeItem("token");
+            sessionStorage.removeItem("lastSelectedFriend");
+            localStorage.removeItem("user");
+            localStorage.removeItem("token");
+            tabSync.postMessage({ type: "logout", sourceTab: window.name });
+            if (socket) {
+                socket.disconnect();
+            }
+            window.location.href = `${APP_BASE}/login.html`;
+        }
+    </script>
+</body>
+
+</html>

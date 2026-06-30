@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', sans-serif;
+        }
+
+        body {
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: linear-gradient(135deg, #ff00cc, #3333ff, #00ffcc);
+            background-size: 300% 300%;
+            animation: gradientMove 8s infinite alternate;
+        }
+
+        @keyframes gradientMove {
+            0% {
+                background-position: left
+            }
+
+            100% {
+                background-position: right
+            }
+        }
+
+        .container {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(15px);
+            padding: 30px;
+            border-radius: 20px;
+            width: 330px;
+            text-align: center;
+            box-shadow: 0 0 30px rgba(0, 0, 0, 0.4);
+        }
+
+        h2 {
+            color: white;
+            margin-bottom: 20px;
+
+        }
+
+        input {
+            width: 100%;
+            padding: 12px;
+            margin: 10px 0;
+            border: none;
+            border-radius: 10px;
+            outline: none;
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+        }
+
+        input::placeholder {
+            color: #ddd;
+        }
+
+        input:focus {
+            box-shadow: 0 0 10px #00ffcc;
+
+        }
+
+        button {
+            width: 100%;
+            padding: 12px;
+            margin-top: 15px;
+            border: none;
+            border-radius: 10px;
+            background: linear-gradient(45deg, #ff00cc, #00ffcc);
+            color: white;
+            font-size: 16px;
+            cursor: pointer;
+            transition: 0.3s;
+        }
+
+        .signup {
+            margin-top: 15px;
+            color: white;
+            font-size: 14px;
+        }
+
+        .signup a {
+            color: #00ffcc;
+            text-decoration: none;
+        }
+
+        .signup a:hover {
+            text-decoration: underline;
+        }
+
+        .helper-link {
+            margin-top: 12px;
+            text-align: right;
+        }
+
+        .helper-link a {
+            color: #9fffe8;
+            font-size: 13px;
+            text-decoration: none;
+        }
+
+        .helper-link a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h2>Chat App</h2>
+        <input type="email" id="email" placeholder="Enter your email">
+        <input type="password" id="password" placeholder="Enter your password">
+        <p style="color:white;font-size:12px;text-align:left;margin-top:5px;">
+             Password must:
+    <br>• Be at least 8 characters
+    <br>• Include uppercase letter
+    <br>• Include lowercase letter
+    <br>• Include number
+        </p>
+        <div class="helper-link">
+            <a href="#" onclick="forgotPasswordFlow(event)">Forgot password?</a>
+        </div>
+        <button onclick="login()">Login</button>
+        <button onclick="goBack()">⬅ Back</button>
+
+        <div class="signup">
+            Don't have an account?<a href="signup.html">Sign up</a>
+        </div>
+    </div>
+    <script>
+        const APP_BASE = "http://localhost:5001";
+
+        function goBack() {
+            window.location.href = `${APP_BASE}/index.html`;
+        }
+
+
+        async function login() {
+
+            const email = document.getElementById("email").value;
+            const password = document.getElementById("password").value;
+            const emailRegex=/^\S+@\S+\.\S+$/;
+            if(!emailRegex.test(email)){
+                alert("Enter a valid email address");
+                return;
+            }
+            if (email === "" || password === "") {
+                alert("Please fill all fields");
+                return;
+            }
+
+            try {
+                const res = await fetch(`${APP_BASE}/login`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({ email, password })
+                });
+
+                const data = await res.json();
+
+                if (data.message === "Invalid credentials") {
+                    alert("Wrong email or password");
+                    return;
+                }
+
+                if (!data.user || !data.user.email) {
+                    alert("Login failed: user data missing");
+                    return;
+                }
+
+                // Keep auth tab-scoped so multiple users can stay logged in across tabs.
+                sessionStorage.setItem("user", JSON.stringify(data.user));
+                sessionStorage.setItem("token", data.token);
+
+                // Remove legacy shared keys that could override another tab on refresh.
+                localStorage.removeItem("user");
+                localStorage.removeItem("token");
+
+                console.log("Login success, redirecting...");
+                window.location.href = `${APP_BASE}/chat.html`;
+
+            } catch (err) {
+                alert(`Server error: ${err.message}`);
+            }
+        }
+
+        async function forgotPasswordFlow(event) {
+            if (event) event.preventDefault();
+
+            const emailInput = document.getElementById("email").value.trim();
+            const email = emailInput || prompt("Enter your account email:");
+            if (!email) return;
+
+            try {
+                const forgotRes = await fetch(`${APP_BASE}/forgot-password`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({ email })
+                });
+
+                const forgotData = await forgotRes.json();
+                if (!forgotRes.ok || !forgotData.token) {
+                    alert(forgotData.message || "Could not generate reset token");
+                    return;
+                }
+
+                const token = prompt("Reset token generated. Paste token here to continue:", forgotData.token);
+                if (!token) return;
+
+                const newPassword = prompt("Enter new password (8+ chars, upper, lower, number):");
+                if (!newPassword) return;
+
+                const confirmPassword = prompt("Confirm new password:");
+                if (newPassword !== confirmPassword) {
+                    alert("Passwords do not match");
+                    return;
+                }
+
+                const resetRes = await fetch(`${APP_BASE}/reset-password`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({ token, newPassword })
+                });
+
+                const resetData = await resetRes.json();
+                alert(resetData.message || "Password reset complete");
+            } catch (err) {
+                alert(`Reset failed: ${err.message}`);
+            }
+        }
+
+    </script>
+
+</body>
+
+</html>

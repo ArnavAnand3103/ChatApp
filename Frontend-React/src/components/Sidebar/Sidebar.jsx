@@ -49,7 +49,13 @@ const archivedGroups = groups.filter(group =>
     useEffect(()=>{
         const loadUsers=async()=>{
             const data=await fetchUsers(token,search);
+            console.log("TOKEN:", token);
+            console.log("TOKEN LENGTH:", token?.length);
 
+            if(!Array.isArray(data)){
+                console.error("fetchUsers returned:",data);
+                return;
+            }
             setUsers(data);
 
             // Initialize from API

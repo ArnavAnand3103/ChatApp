@@ -1,4 +1,5 @@
 import {useEffect,useState} from 'react';
+import {useNavigate} from 'react-router-dom';
 
 import {useAuth} from '../context/AuthContext';
 
@@ -19,6 +20,7 @@ export default function ChatHeader({
     onPhotoClick
 }){
     const {user}=useAuth();
+    const navigate=useNavigate();
 
     const initials = String(selectedUser?.name||"?").slice(0,1).toUpperCase();
 
@@ -106,9 +108,10 @@ export default function ChatHeader({
                 )}
                 <button onClick={onToggleTheme}>Theme</button>
                 <button onClick={onPhoto}>Photo</button>
-                <button onClick={onToggleSearch}>
-                    🔍 Search
-                </button>
+                                <button onClick={onToggleSearch}>Search</button>
+               <button onClick={()=>navigate("/starred")}>
+                 ⭐ Starred
+               </button>
                 <button onClick={onAnalytics}>Analytics</button>
                 <button id="blockBtn" 
                         onClick={onToggleBlock}

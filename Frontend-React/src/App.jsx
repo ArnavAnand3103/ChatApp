@@ -5,6 +5,7 @@ import Signup from './pages/Signup.jsx';
 import ChatPage from './pages/ChatPage.jsx';
 import Home from './pages/Home.jsx';
 import {useAuth} from './context/AuthContext';
+import StarredMessages from './pages/StarredMessages.jsx';
 
 export default function App(){
     const {token}=useAuth();
@@ -25,6 +26,15 @@ export default function App(){
             isAuthenticated
             ?<ChatPage/>
             :<Navigate to='/login'/>
+        }
+        />
+   
+        <Route
+        path="/starred"
+        element={
+            isAuthenticated
+            ?<StarredMessages/>
+            :<Navigate to="/login"/>
         }
         />
         </Routes>

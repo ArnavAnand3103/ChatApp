@@ -251,3 +251,14 @@ export const starMessage=async(token,messageId)=>{
     );
     return await res.json();
 }
+export const fetchStarredMessages=async(token)=>{
+    const res=await fetch(
+        "http://localhost:5001/messages/starred",
+        {
+            headers:{
+                Authorization:`Bearer ${token}`
+            }
+        }
+    );
+    return await res.json();
+}

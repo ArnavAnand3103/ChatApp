@@ -4,11 +4,13 @@ import {createPortal} from 'react-dom';
 import MediaModal from './MediaModal';
 import { starMessage } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
+import ForwardModal from "../ForwardModal";
 
 
-export default function Message({msg,currentUser,status,onReply, searchText}){
+export default function Message({msg,currentUser,status,onReply, searchText,setMessages}){
 
     const [openMedia,setOpenMedia]=useState(null);
+    const [showForward,setShowForward]=useState(false);
     const [showMenu,setShowMenu]=useState(false);
     const [menuPos,setMenuPos]=useState({
         x:0,
@@ -137,9 +139,32 @@ useEffect(()=>{
         <span style={{fontSize:"14px"}}>⭐</span>
     )}
 
-    <span>
-        {msg.messageType !== "media" && msg.message}
+  {msg.messageType !== "media" && (
+
+    <span
+        style={{
+            background:
+                searchText &&
+                msg.message &&
+                msg.message.toLowerCase().includes(searchText.toLowerCase())
+                    ? "#ffe066"
+                    : "transparent",
+
+            color:
+                searchText &&
+                msg.message &&
+                msg.message.toLowerCase().includes(searchText.toLowerCase())
+                    ? "#000"
+                    : "inherit",
+
+            padding: "2px 4px",
+            borderRadius: "4px"
+        }}
+    >
+        {msg.message}
     </span>
+
+)}
 
 </div>
 
@@ -212,6 +237,15 @@ useEffect(()=>{
             </div>
 
             <div
+                onClick={async()=>{
+                    try{
+                        await navigator.clipboard.writeText(msg.message);
+                        alert("Message copied!");
+                    }catch(err){
+                        alert("Failed to copy message");
+                    }
+                    setShowMenu(false)
+                }}
                 style={{
                     padding:"12px 18px",
                     cursor:"pointer"
@@ -224,7 +258,14 @@ useEffect(()=>{
                 onClick={async()=>{
                     const data=await starMessage(token,msg._id);
                     if(data.message){
-                        msg.starred=data.starred;
+                        
+                        setMessages(prev=>
+                            prev.map(m=>
+                                m._id===msg._id
+                                ?{...m,starred:data.starred}
+                                :m
+                            )
+                        );
                         setShowMenu(false);
                     }
                 }}
@@ -237,6 +278,10 @@ useEffect(()=>{
             </div>
 
             <div
+                onClick={()=>{
+                    setShowForward(true);
+                    setShowMenu(false);
+                }}
                 style={{
                     padding:"12px 18px",
                     cursor:"pointer"
@@ -251,6 +296,16 @@ useEffect(()=>{
 
     )
 }
+{showForward && (
+    <ForwardModal
+    
+    onClose={()=>setShowForward(false)}
+    onForward={(user)=>{
+        console.log("Forward to:",user);
+        setShowForward(false);
+    }}
+    />
+)}
         </>
     );
 }

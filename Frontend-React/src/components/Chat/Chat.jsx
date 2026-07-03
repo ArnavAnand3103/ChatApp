@@ -5,7 +5,19 @@ import { useAuth } from '../../context/AuthContext';
 import { showNotification } from '../../utils/notification';
 import {useRef} from 'react'
 
-export default function Chat({ selectedUser, socket, isBlocked }) {
+export default function Chat({
+    selectedUser,
+    socket,
+    isBlocked,
+    showSearch: externalShowSearch,
+    setShowSearch: externalSetShowSearch,
+    searchText: externalSearchText,
+    setSearchText: externalSetSearchText,
+    matchedIndexes: externalMatchedIndexes,
+    setMatchedIndexes: externalSetMatchedIndexes,
+    currentMatch: externalCurrentMatch,
+    setCurrentMatch: externalSetCurrentMatch
+}) {
 
     const { user, token } = useAuth();
 
@@ -14,13 +26,52 @@ export default function Chat({ selectedUser, socket, isBlocked }) {
     const [replyMessage,setReplyMessage]=useState(null);
     const [searchText,setSearchText]=useState("");
     const [showSearch,setShowSearch]=useState(false);
+    const [matchedIndexes,setMatchedIndexes]=useState([]);
+    const [currentMatch,setCurrentMatch]=useState(0);
     const [statusMap, setStatusMap] = useState({});
     const [isTyping, setIsTyping] = useState(false);
     const [file, setFile] = useState(null);
     const [preview, setPreview] = useState(null);
     const bottomRef=useRef(null);
+    const messageRefs=useRef([]);
     const channelRef=useRef(null);
     const typingTimeoutRef=useRef(null);
+    const isSearchVisible = externalShowSearch ?? showSearch;
+    const searchTextValue = externalSearchText ?? searchText;
+    const matchedIndexesValue = externalMatchedIndexes ?? matchedIndexes;
+    const currentMatchValue = externalCurrentMatch ?? currentMatch;
+
+    const setSearchOpen = (nextValue) => {
+        if (externalSetShowSearch) {
+            externalSetShowSearch(nextValue);
+            return;
+        }
+        setShowSearch(nextValue);
+    };
+
+    const setSearchQuery = (nextValue) => {
+        if (externalSetSearchText) {
+            externalSetSearchText(nextValue);
+            return;
+        }
+        setSearchText(nextValue);
+    };
+
+    const setMatchedList = (nextValue) => {
+        if (externalSetMatchedIndexes) {
+            externalSetMatchedIndexes(nextValue);
+            return;
+        }
+        setMatchedIndexes(nextValue);
+    };
+
+    const setMatchIndex = (nextValue) => {
+        if (externalSetCurrentMatch) {
+            externalSetCurrentMatch(nextValue);
+            return;
+        }
+        setCurrentMatch(nextValue);
+    };
 
     useEffect(()=>{
         const channel=new BroadcastChannel("project2-chat-sync");
@@ -195,6 +246,33 @@ export default function Chat({ selectedUser, socket, isBlocked }) {
 
         return()=>socket.off("receiveGroupMessage",handler);
     },[socket,selectedUser])
+    useEffect(()=>{
+        if(!searchTextValue.trim()){
+            setMatchedList([]);
+            setMatchIndex(0);
+            return;
+        }
+        const matches=[];
+        messages.forEach((msg,index)=>{
+            if(
+                msg.message &&
+                msg.message.toLowerCase().includes(searchTextValue.toLowerCase())
+
+            ){
+                matches.push(index);
+            }
+        });
+        setMatchedList(matches);
+        setMatchIndex(0);
+    },[searchTextValue,messages]);
+    useEffect(()=>{
+        if(matchedIndexesValue.length===0) return;
+        const index=matchedIndexesValue[currentMatchValue];
+        messageRefs.current[index]?.scrollIntoView({
+            behavior:"smooth",
+            block:"center"
+        });
+    },[currentMatchValue,matchedIndexesValue]);
 
     const sendMessage = async () => {
 
@@ -271,20 +349,115 @@ export default function Chat({ selectedUser, socket, isBlocked }) {
         setFile(selected);
         setPreview(URL.createObjectURL(selected));
     };
-
+    const handleForwardMessage=(targetUser,message)=>{
+        
+    }
+        
     return (
         <>
+            <div
+            style={{
+              display: "flex",
+             justifyContent: "flex-end",
+              padding: "10px"
+             }}
+>
+             <button
+        onClick={() => setSearchOpen(!isSearchVisible)}
+        style={{
+            padding: "8px 14px",
+            borderRadius: "8px",
+            cursor: "pointer"
+        }}
+    >
+        🔍 Search
+    </button>
+</div>
+                  {isSearchVisible && (
+
+                 <div
+                 style={{
+                 padding: "10px",
+                background: "#202c33",
+                display:"flex",
+                gap:"8px",
+                alignItems:"center"
+             }}
+    >
+
+        <input
+            value={searchTextValue}
+            onChange={(e)=>
+                setSearchQuery(e.target.value)}
+            placeholder="Search messages..."
+            style={{
+              flex:1,
+              padding:"10px",
+              borderRadius:"8px",
+              border:"none"
+            }}
+        />
+        <button
+        disabled={matchedIndexesValue.length===0}
+        onClick={()=>
+            setMatchIndex(prev=>
+                prev===0
+                ?matchedIndexesValue.length-1
+                :prev-1
+            )
+        }
+        >
+              ▲
+        </button>
+        <button
+        disabled={matchedIndexesValue.length===0}
+        onClick={()=>
+            setMatchIndex(prev=>
+                prev===matchedIndexesValue.length-1
+                ?0
+                :prev+1
+            )
+        }
+        >
+              ▼
+        </button>
+        <span>
+            {matchedIndexesValue.length===0
+            ?"0/0"
+            : `${currentMatchValue+1}/${matchedIndexesValue.length}`}
+        </span>
+        <button
+        onClick={()=>{
+            setSearchOpen(false);
+            setSearchQuery("");
+        }}
+        >
+              ✕
+        </button>
+
+    </div>
+
+)}
             <div className="messages-container" id="messagesBox">
                 {messages.map((msg, i) => (
+                    <div
+                    key={msg._id||i}
+                    ref={(el)=>(messageRefs.current[i]=el)}
+                    >
+                    
                     <Message
-                        key={i}
+                      
                         msg={msg}
                         currentUser={user}
                         status={statusMap[msg.clientMessageId]}
                         onReply={setReplyMessage}
-                        searchText={searchText}
+                        searchText={searchTextValue}
+                        setMessages={setMessages}
+                        onForwardMessage={handleForwardMessage}
 
                     />
+                    </div>
+                
                 ))}
                 <div ref={bottomRef}></div>
             </div>
@@ -358,32 +531,7 @@ export default function Chat({ selectedUser, socket, isBlocked }) {
     </div>
 
 )}
-        {showSearch && (
-
-    <div
-        style={{
-            padding: "10px",
-            background: "#202c33",
-            borderBottom: "1px solid #333"
-        }}
-    >
-
-        <input
-            value={searchText}
-            onChange={(e)=>setSearchText(e.target.value)}
-            placeholder="Search messages..."
-            style={{
-                width: "100%",
-                padding: "10px",
-                borderRadius: "8px",
-                border: "none",
-                outline: "none"
-            }}
-        />
-
-    </div>
-
-)}
+  
 
             <div className="input-bar">
                 <button className="send-btn" title="Send image" onClick={() => document.getElementById('mediaInput').click()}>+</button>

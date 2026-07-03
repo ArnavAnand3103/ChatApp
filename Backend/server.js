@@ -71,11 +71,15 @@ const serializeMessage = (messageDoc) => {
         from: String(messageDoc.from || ""),
         to: String(messageDoc.to || ""),
         message: String(messageDoc.message || ""),
+            replyTo: messageDoc.replyTo || null,
+            replyText: String(messageDoc.replyText || ""),
+            replySender: String(messageDoc.replySender || ""),
         messageType: String(messageDoc.messageType || "text"),
         mediaUrl: String(messageDoc.mediaUrl || ""),
         createdAt: messageDoc.createdAt,
         clientMessageId: String(messageDoc.clientMessageId || ""),
-        status: String(messageDoc.status || "offline")
+            status: String(messageDoc.status || "offline"),
+            starred: !!messageDoc.starred
     };
 };
 
@@ -334,7 +338,8 @@ io.on("connection", (socket) => {
                 mediaUrl: savedDoc.mediaUrl,
                 createdAt: savedDoc.createdAt,
                 clientMessageId: savedDoc.clientMessageId,
-                status: savedDoc.status
+                status: savedDoc.status,
+                starred: savedDoc.starred
             };
 
             const senderSockets = Object.keys(users).filter(
@@ -656,6 +661,7 @@ app.get("/messages", requireAuth, async (req, res) => {
         mediaUrl: msg.mediaUrl,
         clientMessageId: msg.clientMessageId,
         status: msg.status,
+        starred: msg.starred,
         createdAt: msg.createdAt
     }))
 );
@@ -972,6 +978,22 @@ app.post("/message/:id/star",requireAuth,async(req,res)=>{
             message:"Updated",
             starred:message.starred
         });
+    }catch(err){
+        res.status(500).json({
+            message:err.message
+        });
+    }
+})
+app.get("/messages/starred",requireAuth,async(req,res)=>{
+    try{
+        const messages=await Message.find({
+            $or:[
+                {from:req.user.email},
+                {to:req.user.email}
+            ],
+            starred:true
+        }).sort({createdAt:-1});
+        res.json(messages);
     }catch(err){
         res.status(500).json({
             message:err.message

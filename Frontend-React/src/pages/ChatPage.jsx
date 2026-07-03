@@ -30,6 +30,10 @@ export default function ChatPage(){
   const [myPhoto,setMyPhoto]=useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [showGroupInfo,setShowGroupInfo]=useState(false);
+  const [showSearch,setShowSearch]=useState(false);
+  const [searchText,setSearchText]=useState("");
+  const [matchedIndexes,setMatchedIndexes]=useState([]);
+  const [currentMatch,setCurrentMatch]=useState(0);
   const [photoViewer,setPhotoViewer]=useState({
     open:false,
     photo:"",
@@ -280,6 +284,14 @@ export default function ChatPage(){
                             selectedUser={selectedUser}
                             socket={socket}
                             isBlocked={isBlocked}
+                          showSearch={showSearch}
+                          setShowSearch={setShowSearch}
+                          searchText={searchText}
+                          setSearchText={setSearchText}
+                          matchedIndexes={matchedIndexes}
+                          setMatchedIndexes={setMatchedIndexes}
+                          currentMatch={currentMatch}
+                          setCurrentMatch={setCurrentMatch}
                             
                         />
                     </div>

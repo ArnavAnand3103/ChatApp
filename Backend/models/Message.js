@@ -53,6 +53,41 @@ const messageSchema=new mongoose.Schema({
         type:Boolean,
         default:false
     },
+    edited:{
+        type:Boolean,
+        default:false
+    },
+    
+    forwarded: {
+    type: Boolean,
+    default: false
+},
+    reactions: [
+    {
+        user: {
+            type: String
+        },
+        emoji: {
+            type: String
+        },
+        name: {
+            type: String
+        }
+    }
+],
+    deletedForEveryone: {
+    type: Boolean,
+    default: false
+},
+
+deletedAt: {
+    type: Date,
+    default: null
+},
+    fileName: {
+    type: String,
+    default: ""
+},
     createdAt:{
         type:Date,
         default:Date.now

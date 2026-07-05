@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { fetchUsers } from "../services/api";
+import { fetchUsers,getGroups } from "../services/api";
 
 export default function ForwardModal({
    
@@ -11,15 +11,25 @@ export default function ForwardModal({
 
     const {token}=useAuth();
     const [users,setUsers]=useState([]);
+    const [groups, setGroups] = useState([]);
     const [selectedUser,setSelectedUser]=useState(null);
     useEffect(()=>{
-        const loadUsers=async()=>{
-            const data=await fetchUsers(token);
-            if(Array.isArray(data)){
-                setUsers(data);
+        const loadData=async()=>{
+
+            const userData=await fetchUsers(token);
+             console.log("Users:", userData);
+            const groupData=await getGroups(token);
+               console.log("Groups:", groupData);
+           
+
+            if(Array.isArray(userData)){
+                setUsers(userData);
+            }
+            if(Array.isArray(groupData)){
+                setGroups(groupData);
             }
         };
-        loadUsers();
+        loadData();
     },[token]);
 
     return (
@@ -69,6 +79,27 @@ export default function ForwardModal({
                         </div>
 
                     ))}
+                    {groups.map(group=>(
+
+                        <div
+                        key={group._id}
+                        onClick={()=>setSelectedUser({
+                            ...group,
+                            isGroup:true
+                        })}
+                        style={{
+                            padding:"10px",
+                            cursor:"pointer",
+                            background:
+                            selectedUser?._id===group._id
+                            ?"#2a3942"
+                            :"transparent"
+                        }}
+                        >
+                           👥 {group.name}
+                           </div> 
+                    ))}
+
                 </div>
 
                 <div

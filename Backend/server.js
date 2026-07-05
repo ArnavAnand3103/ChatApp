@@ -14,6 +14,7 @@ import rateLimit from "express-rate-limit";
 import ArchivedChat from "./models/ArchivedChat.js";
 
 import Group from "./models/Group.js";
+import DeletedMessage from "./models/DeletedMessage.js";
 
 // Load environment variables from .env file
 import dotenv from 'dotenv';
@@ -79,7 +80,8 @@ const serializeMessage = (messageDoc) => {
         createdAt: messageDoc.createdAt,
         clientMessageId: String(messageDoc.clientMessageId || ""),
             status: String(messageDoc.status || "offline"),
-            starred: !!messageDoc.starred
+        starred: !!messageDoc.starred,
+        forwarded: !!messageDoc.forwarded
     };
 };
 
@@ -227,11 +229,15 @@ io.on("connection", (socket) => {
 
     })
 
-    socket.on("privateMessage", async ({ to, message = "", messageType = "text", mediaUrl = "", clientMessageId = "",replyTo=null,replyText="",replySender="" }) => {
+    socket.on("privateMessage", async ({ to, message = "", messageType = "text", mediaUrl = "", fileName = "", clientMessageId = "",replyTo=null,replyText="",replySender="" ,forwarded=false}) => {
+
+
+        console.log("Forwarded received:", forwarded);
         const from = users[socket.id];
         const targetEmail = normalizeEmail(to);
         const senderEmail = normalizeEmail(from?.email);
-        const safeMessageType = messageType === "media" ? "media" : "text";
+        const allowedMsgTypes = ["text", "image", "video", "document"];
+        const safeMessageType = allowedMsgTypes.includes(messageType) ? messageType : "text";
         const text = String(message || "").trim();
         const media = String(mediaUrl || "");
 
@@ -267,13 +273,18 @@ io.on("connection", (socket) => {
             return;
         }
 
-        if (safeMessageType === "media" && !media) {
-            socket.emit("messageStatus", {
-                ok: false,
-                message: "Media payload missing"
-            });
-            return;
-        }
+    if (
+    (safeMessageType === "image" ||
+     safeMessageType === "video" ||
+     safeMessageType === "document") &&
+    !media
+) {
+    socket.emit("messageStatus", {
+        ok: false,
+        message: "Media payload missing"
+    });
+    return;
+}
 
         // Check if sender is blocked by receiver
         const isBlocked = await BlockedUser.findOne({
@@ -314,11 +325,14 @@ io.on("connection", (socket) => {
                 replyTo,
                 replyText,
                 replySender,
-
+              
                 messageType: safeMessageType,
                 mediaUrl: media,
+                fileName,
                 clientMessageId: String(clientMessageId || ""),
-                status: deliveryStatus
+                status: deliveryStatus,
+
+                forwarded
             });
 
             const savedDoc = serializeMessage(savedMessage);
@@ -336,10 +350,12 @@ io.on("connection", (socket) => {
 
                 messageType: savedDoc.messageType,
                 mediaUrl: savedDoc.mediaUrl,
+                fileName: savedDoc.fileName,
                 createdAt: savedDoc.createdAt,
                 clientMessageId: savedDoc.clientMessageId,
                 status: savedDoc.status,
-                starred: savedDoc.starred
+                starred: savedDoc.starred,
+                forwarded: savedDoc.forwarded
             };
 
             const senderSockets = Object.keys(users).filter(
@@ -535,19 +551,27 @@ io.on("connection", (socket) => {
             console.log("Delete error:", err);
         }
     });
-    socket.on("groupMessage",async({groupId,message})=>{
+    socket.on("groupMessage",async({groupId,message,messageType="text",mediaUrl="",fileName="",forwarded=false})=>{
         try{
             const group=await Group.findById(groupId);
 
             if(!group) return;
 
             const sender=socket.user.email;
+            const allowedTypes = ["text", "image", "video", "document"];
+
+            const safeMessageType = allowedTypes.includes(messageType)
+            ? messageType
+            : "text";
 
             const saved=await Message.create({
                 from:sender,
                 to:groupId,
                 message,
-                messageType:"text"
+                messageType:safeMessageType,
+                mediaUrl,
+                fileName,
+                forwarded
             });
 
             const payload={
@@ -568,7 +592,293 @@ io.on("connection", (socket) => {
             console.log(err);
         }
     })
+    socket.on("deleteForMe", async ({ messageId }) => {
+    try {
+
+        const message = await Message.findById(messageId);
+
+        if (!message) return;
+
+       await DeletedMessage.findOneAndUpdate(
+    {
+        user: socket.user.email,
+        messageId
+    },
+    {},
+    {
+        upsert: true,
+        new: true
+    }
+);
+ 
+
+
+        socket.emit("messageDeletedForMe", {
+            messageId
+        });
+
+    } catch (err) {
+        console.error("Delete for me error:", err);
+    }
 });
+    socket.on("reactMessage", async ({ messageId, emoji }) => {
+
+    try {
+
+        const message = await Message.findById(messageId);
+
+        if (!message) return;
+
+        const me = socket.user.email;
+
+        // Find existing reaction by this user
+        const existing = message.reactions.find(
+            reaction => reaction.user === me
+        );
+        let isNewReaction = false;
+
+        if (existing) {
+
+            // Same emoji clicked → remove reaction
+            if (existing.emoji === emoji) {
+
+                message.reactions = message.reactions.filter(
+                    reaction => reaction.user !== me
+                );
+
+            } else {
+
+                // Change reaction
+                existing.emoji = emoji;
+
+            }
+
+        } else {
+
+            // First reaction
+            message.reactions.push({
+                user: me,
+                name: socket.user.name,
+                emoji
+            });
+            isNewReaction = true;
+
+        }
+
+        await message.save();
+
+        const payload = {
+            messageId,
+            reactions: message.reactions,
+
+             reactedBy: socket.user.email,
+            emoji,
+
+    messageOwner: message.from,
+     isNewReaction
+        };
+
+        // ---------- GROUP ----------
+        let group = null;
+
+        if (mongoose.Types.ObjectId.isValid(message.to)) {
+            group = await Group.findById(message.to);
+        }
+
+        if (group) {
+
+            group.members.forEach(member => {
+
+                const sockets = Object.keys(users).filter(
+                    id => users[id]?.email === member
+                );
+
+                sockets.forEach(id => {
+                    io.to(id).emit("messageReaction", payload);
+                });
+
+            });
+
+        } else {
+
+            // ---------- PRIVATE ----------
+            const senderSockets = Object.keys(users).filter(
+                id => users[id]?.email === message.from
+            );
+
+            const receiverSockets = Object.keys(users).filter(
+                id => users[id]?.email === message.to
+            );
+
+            senderSockets.forEach(id => {
+                io.to(id).emit("messageReaction", payload);
+            });
+
+            receiverSockets.forEach(id => {
+                io.to(id).emit("messageReaction", payload);
+            });
+
+        }
+
+    } catch (err) {
+
+        console.error("Reaction error:", err);
+
+    }
+
+});
+   socket.on("deleteForEveryone", async ({ messageId }) => {
+            
+    try {
+
+        const message = await Message.findById(messageId);
+
+        if (!message) return;
+
+        // Only the sender can delete the message
+        if (message.from !== socket.user.email) {
+            return;
+        }
+
+        message.deletedForEveryone = true;
+        message.deletedAt = new Date();
+
+        await message.save();
+
+        const payload = {
+            messageId,
+            deletedForEveryone: true
+        };
+
+        // Check if it's a group message
+        let group=null;
+      if (mongoose.Types.ObjectId.isValid(message.to)) {
+    group = await Group.findById(message.to);
+            }           
+        if (group) {
+
+            group.members.forEach(member => {
+
+                const sockets = Object.keys(users).filter(
+                    id => users[id]?.email === member
+                );
+
+                sockets.forEach(id => {
+                    io.to(id).emit("messageDeletedForEveryone", payload);
+                });
+
+            });
+
+        } else {
+
+            // Private chat
+            const senderSockets = Object.keys(users).filter(
+                id => users[id]?.email === message.from
+            );
+
+            const receiverSockets = Object.keys(users).filter(
+                id => users[id]?.email === message.to
+            );
+
+            senderSockets.forEach(id => {
+                io.to(id).emit("messageDeletedForEveryone", payload);
+            });
+
+            receiverSockets.forEach(id => {
+                io.to(id).emit("messageDeletedForEveryone", payload);
+            });
+
+        }
+
+    } catch (err) {
+    console.error("========== DELETE FOR EVERYONE ERROR ==========");
+    console.error(err);
+    console.error(err.stack);
+    console.error("===============================================");
+}
+   });
+
+    socket.on("editMessage",async({messageId,newMessage})=>{
+        try{
+            const message=await Message.findById(messageId);
+              if(!message) return;
+            if (message.from !== socket.user.email) {
+                return;
+                }
+            if (!newMessage.trim()) {
+            socket.emit("editFailed", {
+          message: "Message cannot be empty"
+                     });
+                return;
+}
+
+          
+
+            message.message=newMessage;
+            message.edited=true;
+            await message.save();
+
+          const senderSockets = Object.keys(users).filter(
+    id => users[id]?.email === message.from
+);
+
+const receiverSockets = Object.keys(users).filter(
+    id => users[id]?.email === message.to
+);
+
+const payload = {
+    messageId,
+    message: message.message,
+    edited: true
+};
+
+// Check whether "to" is a group ID
+   let group=null;
+      if (mongoose.Types.ObjectId.isValid(message.to)) {
+    group = await Group.findById(message.to);
+            }    
+
+if (group) {
+
+    // Group message
+    group.members.forEach(member => {
+
+        const sockets = Object.keys(users).filter(
+            id => users[id]?.email === member
+        );
+
+        sockets.forEach(id => {
+            io.to(id).emit("messageEdited", payload);
+        });
+
+    });
+
+} else {
+
+    // Private message
+    const senderSockets = Object.keys(users).filter(
+        id => users[id]?.email === message.from
+    );
+
+    const receiverSockets = Object.keys(users).filter(
+        id => users[id]?.email === message.to
+    );
+
+    senderSockets.forEach(id => {
+        io.to(id).emit("messageEdited", payload);
+    });
+
+    receiverSockets.forEach(id => {
+        io.to(id).emit("messageEdited", payload);
+    });
+
+}
+        }catch(err){
+            console.error("Edit message error:",err);
+        }
+    })
+}
+);
 app.get("/search", requireAuth, async (req, res) => {
     const me = normalizeEmail(req.user.email);
     const query = req.query.q;
@@ -639,13 +949,34 @@ app.get("/messages", requireAuth, async (req, res) => {
     }
 
     try {
-        const messages = await Message.find({
-            $or: [
-                { from: me, to: withUser },
-                { from: withUser, to: me }
-            ]
-        }).sort({ createdAt: 1 });
+       const deletedMessages = await DeletedMessage.find({
+    user: req.user.email
+});
 
+const deletedIds = deletedMessages.map(
+    item => item.messageId
+);
+
+const messages = await Message.find({
+
+    _id: {
+        $nin: deletedIds
+    },
+
+    $or: [
+        {
+            from: req.user.email,
+            to: withUser
+        },
+        {
+            from: withUser,
+            to: req.user.email
+        }
+    ]
+
+}).sort({
+    createdAt: 1
+});
         res.json(
     messages.map(msg => ({
         _id: msg._id,
@@ -662,6 +993,11 @@ app.get("/messages", requireAuth, async (req, res) => {
         clientMessageId: msg.clientMessageId,
         status: msg.status,
         starred: msg.starred,
+        edited: msg.edited,   
+        forwarded: msg.forwarded,
+        deletedForEveryone: msg.deletedForEveryone,
+        reactions: msg.reactions,
+        deletedAt: msg.deletedAt,
         createdAt: msg.createdAt
     }))
 );
@@ -677,7 +1013,11 @@ app.post("/messages", (req, res, next) => {
 }, requireAuth, async (req, res) => {
     const senderEmail = req.user.email;
     const targetEmail = normalizeEmail(req.body?.to);
-    const safeMessageType = req.body?.messageType === "media" ? "media" : "text";
+const allowedTypes = ["text", "image", "video", "document"];
+
+const safeMessageType = allowedTypes.includes(req.body?.messageType)
+    ? req.body.messageType
+    : "text";
     const text = String(req.body?.message || "").trim();
     const media = String(req.body?.mediaUrl || "");
     const clientMessageId = String(req.body?.clientMessageId || "");
@@ -741,7 +1081,8 @@ app.post("/messages", (req, res, next) => {
             mediaUrl: savedDoc.mediaUrl,
             createdAt: savedDoc.createdAt,
             clientMessageId: savedDoc.clientMessageId,
-            status: savedDoc.status
+            status: savedDoc.status,
+            forwarded: savedDoc.forwarded
         };
 
         const receiverSockets = Object.keys(users).filter(
@@ -993,7 +1334,23 @@ app.get("/messages/starred",requireAuth,async(req,res)=>{
             ],
             starred:true
         }).sort({createdAt:-1});
-        res.json(messages);
+        res.json(messages.map(msg => ({
+            _id: msg._id,
+            from: msg.from,
+            to: msg.to,
+            message: msg.message,
+            replyTo: msg.replyTo,
+            replyText: msg.replyText,
+            replySender: msg.replySender,
+            messageType: msg.messageType,
+            mediaUrl: msg.mediaUrl,
+            clientMessageId: msg.clientMessageId,
+            status: msg.status,
+            starred: msg.starred,
+            edited: msg.edited,
+            forwarded: msg.forwarded,
+            createdAt: msg.createdAt
+        })));
     }catch(err){
         res.status(500).json({
             message:err.message
@@ -1014,18 +1371,57 @@ app.get("/groups",requireAuth,async(req,res)=>{
 app.get("/group-messages/:groupId",requireAuth,async(req,res)=>{
     try{
         //get group id from URL
-        const {groupId}=req.params;
-        //find all messages of this group
-        const messages=await Message.find({
-            to:groupId
-        })
-        .sort({createdAt:1});//oldest first
+        const deletedMessages = await DeletedMessage.find({
+    user: req.user.email
+});
+
+const deletedIds = deletedMessages.map(
+    item => item.messageId
+);
+
+const messages = await Message.find({
+
+    to: req.params.groupId,
+
+    _id: {
+        $nin: deletedIds
+    }
+
+}).sort({
+    createdAt: 1
+});//oldest first
         //send messages
         res.json(messages);
     }catch(err){
-        res.status(500).json({
-            message:err.message
-        });
+       res.json(
+    messages.map(msg => ({
+        _id: msg._id,
+        from: msg.from,
+        to: msg.to,
+        message: msg.message,
+
+        replyTo: msg.replyTo,
+        replyText: msg.replyText,
+        replySender: msg.replySender,
+
+        messageType: msg.messageType,
+        mediaUrl: msg.mediaUrl,
+        fileName: msg.fileName,
+
+        clientMessageId: msg.clientMessageId,
+        status: msg.status,
+
+        starred: msg.starred,
+        edited: msg.edited,
+        forwarded: msg.forwarded,
+
+        deletedForEveryone: msg.deletedForEveryone,
+        reactions: msg.reactions,
+        deletedAt: msg.deletedAt,
+
+        createdAt: msg.createdAt
+    }))
+);
     }
 })
 app.get("/group/:groupId", requireAuth, async (req, res) => {

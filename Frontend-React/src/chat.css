@@ -84,6 +84,7 @@ body[data-theme="light"] {
 .friend-list {
     flex: 1;
     overflow-y: auto;
+    overflow-x: visible;
     padding: 10px 0;
 }
 

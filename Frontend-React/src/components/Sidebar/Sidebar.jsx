@@ -31,7 +31,7 @@ export default function Sidebar({onSelectUser,selectedUser,onlineUsers = [],sock
     const [groupName,setGroupName]=useState("");
     const [selectedMembers,setSelectedMembers]=useState([]);
     const [menuOpen, setMenuOpen] = useState(null);
-    
+
     const archivedUsers = users.filter(user =>
     archivedChats.some(chat =>
         chat.chatId === user.email &&
@@ -230,7 +230,7 @@ useEffect(()=>{
     socket.on("removeFromGroup",handler);
     return ()=>{
         socket.off("removeFromGroup",handler);
-    }
+    };
 },[socket,selectedUser,onSelectUser]);
 
 useEffect(()=>{
@@ -259,7 +259,7 @@ useEffect(()=>{
                 g=>String(g._id)===String(msg.groupId)
 
                )?.name||"Group",
-               text:msg.message
+               
             });
             setTimeout(()=>{
                 setToast(null);
@@ -272,6 +272,25 @@ useEffect(()=>{
     };
 
 },[socket,selectedUser]);
+
+useEffect(() => {
+    if (!socket) return;
+
+    const seenHandler = ({ messageIds }) => {
+        if (!messageIds?.length || !selectedUser?.email) return;
+        setUnreadCounts(prev => ({
+            ...prev,
+            [selectedUser.email]: 0
+        }));
+    };
+
+    socket.on("messagesSeen", seenHandler);
+
+    return () => {
+        socket.off("messagesSeen", seenHandler);
+    };
+
+}, [socket, selectedUser]);
         
     return (
         <>
@@ -296,7 +315,7 @@ useEffect(()=>{
         {
 toast && (
 <div className="group-toast">
-    New Message in {toast.groupName}:{toast.text}
+    New Message in {toast.groupName}
     
 </div>
 )
@@ -322,7 +341,7 @@ toast && (
                   ➕ Create Group  
                 </button>
 
-                <div className="friend-list">
+                <div className="friend-list" style={{overflowY:"auto",overflowX:"visible"}}>
 
                 {users
                 .filter(u =>
@@ -428,7 +447,7 @@ toast && (
                                          style={{
                                         position: "absolute",
                                         right: "10px",
-                                        top: "45px",
+                                        bottom: "45px",
                                         background: "#222",
                                         borderRadius: "8px",
                                          padding: "8px",
@@ -642,7 +661,7 @@ toast && (
     style={{
         position: "absolute",
         right: 0,
-        top: "35px",
+        bottom: "35px",
         background: "#222",
         borderRadius: "8px",
         padding: "8px",
@@ -750,6 +769,84 @@ onClick={async (e) => {
         </div>
 
     </div>
+        <div
+    style={{
+        marginLeft: "auto",
+        position: "relative"
+    }}
+>
+
+    <button
+        onClick={(e) => {
+            e.stopPropagation();
+
+            setMenuOpen(
+                menuOpen === `archived-group-${g._id}`
+                    ? null
+                    : `archived-group-${g._id}`
+            );
+        }}
+        style={{
+            background: "transparent",
+            border: "none",
+            color: "white",
+            cursor: "pointer",
+            fontSize: "20px"
+        }}
+    >
+        ⋮
+    </button>
+
+    {menuOpen === `archived-group-${g._id}` && (
+
+        <div
+            style={{
+                position: "absolute",
+                right: 0,
+                bottom: "35px",
+                background: "#222",
+                borderRadius: "8px",
+                padding: "8px",
+                display: "flex",
+                flexDirection: "column",
+                zIndex: 1000
+            }}
+        >
+
+            <button
+                onClick={async (e) => {
+
+                    e.stopPropagation();
+
+                    const data = await unarchiveChat(
+                        token,
+                        g._id
+                    );
+
+                    alert(data.message);
+
+                    if (data.message === "Chat restored") {
+
+                        setArchivedChats(prev =>
+                            prev.filter(chat =>
+                                chat.chatId !== g._id
+                            )
+                        );
+
+                    }
+
+                    setMenuOpen(null);
+
+                }}
+            >
+                Unarchive Group
+            </button>
+
+        </div>
+
+    )}
+
+</div>
 
 </div>
 
@@ -856,7 +953,7 @@ onClick={async (e) => {
                 style={{
                     position: "absolute",
                     right: 0,
-                    top: "35px",
+                    bottom: "35px",
                     background: "#222",
                     borderRadius: "8px",
                     padding: "8px",

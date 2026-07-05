@@ -24,6 +24,7 @@ export default function Chat({
     const [messages, setMessages] = useState([]);
     const [text, setText] = useState("");
     const [replyMessage,setReplyMessage]=useState(null);
+    const [editingMessage, setEditingMessage] = useState(null);
     const [searchText,setSearchText]=useState("");
     const [showSearch,setShowSearch]=useState(false);
     const [matchedIndexes,setMatchedIndexes]=useState([]);
@@ -96,10 +97,10 @@ export default function Chat({
         return ()=>channel.close();
     },[selectedUser]);
 
-    const markMessageSeen = () => {
+    const markMessageSeen = (messageList = messages) => {
         if (!socket || !selectedUser) return;
 
-        const unseenIds = messages
+        const unseenIds = messageList
             .filter(m => m.to === user.email && m.status !== "seen")
             .map(m => m._id);
 
@@ -129,7 +130,7 @@ export default function Chat({
             setStatusMap({});
 
             setTimeout(() => {
-                markMessageSeen();
+                markMessageSeen(data);
             }, 200);
         };
 
@@ -147,8 +148,22 @@ export default function Chat({
                 to === selectedUser?.email
             ) {
                 setMessages(prev => {
-                    const isDuplicate = prev.some(m => (m._id && m._id === msg._id) || (m.clientMessageId && m.clientMessageId === msg.clientMessageId));
-                    if (isDuplicate) return prev;
+                    const duplicateIndex = prev.findIndex(m =>
+                        (m._id && msg._id && String(m._id) === String(msg._id)) ||
+                        (m.clientMessageId && msg.clientMessageId && m.clientMessageId === msg.clientMessageId)
+                    );
+
+                    if (duplicateIndex !== -1) {
+                        const updated = [...prev];
+                        updated[duplicateIndex] = {
+                            ...updated[duplicateIndex],
+                            ...msg,
+                            clientMessageId: updated[duplicateIndex].clientMessageId || msg.clientMessageId,
+                            createdAt: updated[duplicateIndex].createdAt || msg.createdAt
+                        };
+                        return updated;
+                    }
+
                     return [...prev, msg];
                 });
             }
@@ -179,6 +194,8 @@ export default function Chat({
                 setMessages([]);
             }
         };
+        
+   
 
         socket.on("receiveMessage", handler);
         socket.on("messageStatus", statusHandler);
@@ -209,18 +226,110 @@ export default function Chat({
                 messageIds.forEach(id => {
                     updated[id] = "seen";
                 });
+
                 return updated;
             });
         };
+        const editHandler=({messageId,message,edited})=>{
+
+            setMessages(prev=>
+                prev.map(msg=>
+                    msg._id===messageId
+                    ?{
+                        ...msg,
+                        message,
+                        edited
+                    }
+                    :msg
+                )
+            );
+        }
+        const deleteHandler = ({ messageId }) => {
+    setMessages(prev =>
+        prev.filter(msg => msg._id !== messageId)
+    );
+   
+
+};
+const deleteEveryoneHandler = ({ messageId }) => {
+
+    setMessages(prev =>
+        prev.map(msg => {
+
+            // Mark the deleted message
+            if (msg._id === messageId) {
+                return {
+                    ...msg,
+                    deletedForEveryone: true
+                };
+            }
+
+            // Update reply preview if this message replied to the deleted one
+            if (msg.replyTo === messageId) {
+                return {
+                    ...msg,
+                    replyText: "🚫 This message was deleted"
+                };
+            }
+
+            return msg;
+
+        })
+    );
+
+};
+const reactionHandler = ({
+    messageId,
+    reactions,
+    reactedBy,
+    emoji,
+    messageOwner
+}) => {
+
+   
+
+    
+
+    setMessages(prev =>
+        prev.map(msg =>
+            msg._id === messageId
+                ? {
+                    ...msg,
+                    reactions
+                }
+                : msg
+        )
+    );
+  
+
+    if (
+        reactedBy !== user.email &&
+        messageOwner === user.email &&
+        isNewReaction
+    ) {
+        showNotification(
+            "New Reaction",
+            `${reactedBy} reacted ${emoji} to your message`
+        );
+    }
+};
 
         socket.on("showTyping", typingHandler);
         socket.on("hideTyping", stopTypingHandler);
         socket.on("messagesSeen", seenHandler);
+        socket.on("messageEdited", editHandler);
+        socket.on("messageDeletedForMe", deleteHandler);
+        socket.on("messageDeletedForEveryone", deleteEveryoneHandler);
+        socket.on("messageReaction", reactionHandler);
 
         return () => {
             socket.off("showTyping", typingHandler);
             socket.off("hideTyping", stopTypingHandler);
             socket.off("messagesSeen", seenHandler);
+            socket.off("messageEdited", editHandler);
+            socket.off("messageDeletedForMe", deleteHandler);
+            socket.off("messageDeletedForEveryone", deleteEveryoneHandler);
+            socket.off("messageReaction", reactionHandler);
         };
 
     }, [socket, selectedUser]);
@@ -273,41 +382,74 @@ export default function Chat({
             block:"center"
         });
     },[currentMatchValue,matchedIndexesValue]);
+const sendMessage = async () => {
 
-    const sendMessage = async () => {
+    if (editingMessage) {
 
-           if(selectedUser?.isGroup){
-            if(!text.trim()) return;
-            socket.emit("groupMessage",{
-                groupId:selectedUser._id,
-                message:text
-            });
-            setText("");
-            return;
-        }
-        if (isBlocked) return;
-        if (!text.trim() && !file) return;
+        socket.emit("editMessage", {
+            messageId: editingMessage._id,
+            newMessage: text
+        });
+
+        setEditingMessage(null);
+        setText("");
+
+        return;
+    }
+
+    if (selectedUser?.isGroup) {
+
+        if (!text.trim()) return;
+
+        socket.emit("groupMessage", {
+            groupId: selectedUser._id,
+            message: text
+        });
+
+        setText("");
+        return;
+    }
+
+    if (isBlocked) return;
+
+    if (!text.trim() && !file) return;
+
+
+       
 
         const clientMessageId = Date.now().toString();
 
         let mediaUrl = "";
-        let messageType = "text";
+       let messageType = "text";
 
-        if (file) {
-            mediaUrl = await new Promise((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onload = () => resolve(String(reader.result || ""));
-                reader.onerror = () => reject(new Error("Failed to read media"));
-                reader.readAsDataURL(file);
-            });
-            messageType = "media";
-        }
+if (file) {
+
+    mediaUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(new Error("Failed to read media"));
+
+        reader.readAsDataURL(file);
+    });
+
+    if (file.type.startsWith("image")) {
+        messageType = "image";
+    }
+    else if (file.type.startsWith("video")) {
+        messageType = "video";
+    }
+    else {
+        messageType = "document";
+    }
+}
 
         const msg = {
             to: selectedUser.email,
             message: text,
             messageType,
             mediaUrl,
+            fileName: file?.name || "",
             clientMessageId,
 
              replyTo: replyMessage?._id || null,
@@ -350,8 +492,79 @@ export default function Chat({
         setPreview(URL.createObjectURL(selected));
     };
     const handleForwardMessage=(targetUser,message)=>{
-        
+        if(!socket) return;
+        if(targetUser.isGroup){
+            socket.emit("groupMessage",{
+                groupId:targetUser._id,
+                message:message.message,
+                messageType: message.messageType || "text",
+                mediaUrl: message.mediaUrl || "",
+                fileName: message.fileName || "",
+                forwarded: true
+            });
+           showNotification("Forward", "Message forwarded");
+            return;
+        }
+
+        const clientMessageId=Date.now().toString();
+        const forwardMsg={
+            to:targetUser.email,
+            message:message.message,
+            messageType:message.messageType||"text",
+            mediaUrl:message.mediaUrl||"",
+            fileName:message.fileName||"",
+            clientMessageId,
+            replyTo:null,
+            replyText:"",
+            replySender:"",
+            forwarded:true
+        };
+        socket.emit("privateMessage",forwardMsg);
+       
+        showNotification("Forward", "Message forwarded");
     }
+    const handleDeleteForMe = (msg) => {
+
+    if (!socket) return;
+
+    socket.emit("deleteForMe", {
+        messageId: msg._id
+    });
+
+};
+
+const handleDeleteForEveryone = (msg) => {
+
+    console.log("🔥 handleDeleteForEveryone called");
+
+    if (!socket) {
+        console.log("❌ Socket is NULL");
+        return;
+    }
+
+    console.log("✅ Socket exists");
+
+    console.log(msg);
+
+    socket.emit("deleteForEveryone", {
+        messageId: msg._id
+    });
+
+    console.log("✅ Event emitted");
+
+};
+const handleReaction = (msg, emoji) => {
+
+    if (!socket) return;
+
+    socket.emit("reactMessage", {
+        messageId: msg._id,
+        emoji
+    });
+
+};
+
+
         
     return (
         <>
@@ -449,8 +662,16 @@ export default function Chat({
                       
                         msg={msg}
                         currentUser={user}
-                        status={statusMap[msg.clientMessageId]}
+                      
+                        status={statusMap[msg.clientMessageId]||msg.status}
                         onReply={setReplyMessage}
+                        onEdit={(message)=>{
+                            setEditingMessage(message);
+                            setText(message.message);
+                                 }}
+                        onDeleteForMe={handleDeleteForMe}
+                        onDeleteForEveryone={handleDeleteForEveryone}
+                         onReact={handleReaction}
                         searchText={searchTextValue}
                         setMessages={setMessages}
                         onForwardMessage={handleForwardMessage}
@@ -462,15 +683,72 @@ export default function Chat({
                 <div ref={bottomRef}></div>
             </div>
 
-            {preview && (
-                <div style={{ margin: "10px",padding:"10px",borderRadius:"12px",background:"rgba(255,255,255,0.04)",display:"inline-block" }}>
-                    {file.type.startsWith("image") ? (
-                        <img src={preview} width="200" />
-                    ) : (
-                        <video src={preview} width="200" controls />
-                    )}
+          {preview && (
+    <div
+        style={{
+            margin: "10px",
+            padding: "10px",
+            borderRadius: "12px",
+            background: "rgba(255,255,255,0.04)",
+            display: "inline-block",
+            maxWidth: "260px"
+        }}
+    >
+
+        {file.type.startsWith("image") ? (
+
+            <img
+                src={preview}
+                width="200"
+                style={{ borderRadius: "8px" }}
+            />
+
+        ) : file.type.startsWith("video") ? (
+
+            <video
+                src={preview}
+                width="200"
+                controls
+                style={{ borderRadius: "8px" }}
+            />
+
+        ) : (
+
+            <div
+                style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "10px",
+                    color: "white"
+                }}
+            >
+                <span style={{ fontSize: "32px" }}>📄</span>
+
+                <div>
+                    <div
+                        style={{
+                            fontWeight: "bold",
+                            wordBreak: "break-word"
+                        }}
+                    >
+                        {file.name}
+                    </div>
+
+                    <div
+                        style={{
+                            fontSize: "12px",
+                            color: "#999"
+                        }}
+                    >
+                        {(file.size / 1024).toFixed(1)} KB
+                    </div>
                 </div>
-            )}
+            </div>
+
+        )}
+
+    </div>
+)}
 
             {isBlocked && (
                 <div style={{ color: "#ef4444", margin: "6px 8px",fontSize:"12px", paddingLeft:"30px" }}>
@@ -531,7 +809,59 @@ export default function Chat({
     </div>
 
 )}
-  
+        {editingMessage && (
+
+            <div
+            style={{
+                         background: "#2a2a2a",
+            borderLeft: "4px solid orange",
+            padding: "10px",
+            margin: "10px",
+            borderRadius: "8px",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center"
+            }}
+            >
+
+            <div>
+                 <div
+                style={{
+                    color: "orange",
+                    fontWeight: "bold",
+                    fontSize: "13px"
+                }}
+            >
+                Editing Message
+            </div>
+
+            <div>
+                {editingMessage.message}
+            </div>
+            </div>
+
+            <button
+                onClick={(e)=>{
+                    e.stopPropagation();
+
+                    setEditingMessage(null);
+                    setText("");
+                }}
+                style={{
+                 background: "transparent",
+                border: "none",
+                color: "white",
+                cursor: "pointer",
+                fontSize: "18px"
+                }}
+                >
+                    
+                   ✕
+ 
+                    
+                </button>
+            </div>
+        )}
 
             <div className="input-bar">
                 <button className="send-btn" title="Send image" onClick={() => document.getElementById('mediaInput').click()}>+</button>
@@ -559,7 +889,7 @@ export default function Chat({
                 <input
                     id="mediaInput"
                     type="file"
-                    accept="image/*,video/*"
+                    accept="image/*,video/*,.pdf,.doc,.docx,.txt,.zip"
                     onChange={handleFileChange}
                     style={{display:"none"}}
                 />

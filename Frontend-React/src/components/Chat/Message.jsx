@@ -7,7 +7,7 @@ import { useAuth } from "../../context/AuthContext";
 import ForwardModal from "../ForwardModal";
 
 
-export default function Message({msg,currentUser,status,onReply, searchText,setMessages}){
+export default function Message({msg,currentUser,status,onReply,onEdit, onDeleteForMe,onDeleteForEveryone, onReact, searchText,setMessages,onForwardMessage}){
 
     const [openMedia,setOpenMedia]=useState(null);
     const [showForward,setShowForward]=useState(false);
@@ -16,24 +16,28 @@ export default function Message({msg,currentUser,status,onReply, searchText,setM
         x:0,
         y:0
     });
+    const [reactionPopup, setReactionPopup] = useState(null);
+const [showReactionPopup, setShowReactionPopup] = useState(false);
     const {token}=useAuth();
 useEffect(()=>{
     const closeMenu=()=>{
         setShowMenu(false);
     };
     window.addEventListener("click",closeMenu);
+    window.addEventListener("closeAllMenus",closeMenu);
     return ()=>{
         window.removeEventListener("click",closeMenu);
+        window.removeEventListener("closeAllMenus",closeMenu);
     };
 },[]);
 
     const isMe=msg.from===currentUser.email;
-
+    console.log("Message object:",msg);
     let statusIcon="";
 
- if (status === "sent") statusIcon = "✔";       
-  if (status === "delivered") statusIcon = "✔✔";
-  if(status==="seen") statusIcon="✔✔";
+ if (status === "sent" || status === "offline") statusIcon = "✔";       
+     if (status === "delivered") statusIcon = "✔✔";
+     if(status==="seen") statusIcon="✔✔";
 
     return(
         <>
@@ -42,10 +46,15 @@ useEffect(()=>{
             className={`message ${isMe ? 'me' : 'other'}`}
        onContextMenu={(e)=>{
 
+        if (msg.deletedForEveryone) {
+        return;
+    }
+
     e.preventDefault();
 
     const menuWidth = 180;
-    const menuHeight = 170;
+    const menuHeight = 340;
+    const reactionBarWidth = 470;
 
     let x = e.clientX;
     let y = e.clientY;
@@ -53,20 +62,28 @@ useEffect(()=>{
     if (x + menuWidth > window.innerWidth) {
         x = window.innerWidth - menuWidth - 10;
     }
+    if (x < 10) {
+    x = 10;
+}
 
     if (y + menuHeight > window.innerHeight) {
         y = window.innerHeight - menuHeight - 10;
     }
+
+    if (y < 70) {
+    y = 70;
+}
 
     setMenuPos({
         x,
         y
     });
 
+    window.dispatchEvent(new CustomEvent("closeAllMenus"));
     setShowMenu(true);
 
 }}>
-               {msg.replyTo && (
+               {!msg.deletedForEveryone && msg.replyTo && (
     <div
              onClick={()=>{
             const element=document.getElementById(`msg-${msg.replyTo}`);
@@ -114,8 +131,25 @@ useEffect(()=>{
         </div>
     </div>
 )}
+       {!msg.deletedForEveryone && msg.forwarded && (
+    <div
+        style={{
+            fontSize: "12px",
+            color: "#9ca3af",
+            fontStyle: "italic",
+            marginBottom: "4px"
+        }}
+    >
+        ↪ Forwarded
+
+    </div>
+    
+    
+)}
+
 
 <div
+ 
     style={{
         display:"flex",
         alignItems:"center",
@@ -139,60 +173,245 @@ useEffect(()=>{
         <span style={{fontSize:"14px"}}>⭐</span>
     )}
 
-  {msg.messageType !== "media" && (
+  {msg.deletedForEveryone ? (
 
     <span
         style={{
-            background:
-                searchText &&
-                msg.message &&
-                msg.message.toLowerCase().includes(searchText.toLowerCase())
-                    ? "#ffe066"
-                    : "transparent",
-
-            color:
-                searchText &&
-                msg.message &&
-                msg.message.toLowerCase().includes(searchText.toLowerCase())
-                    ? "#000"
-                    : "inherit",
-
-            padding: "2px 4px",
-            borderRadius: "4px"
+            fontStyle: "italic",
+            color: "#999"
         }}
     >
-        {msg.message}
+        🚫 This message was deleted
     </span>
+
+) : (
+
+    msg.messageType !== "media" && (
+
+        <span
+            style={{
+                background:
+                    searchText &&
+                    msg.message &&
+                    msg.message.toLowerCase().includes(searchText.toLowerCase())
+                        ? "#ffe066"
+                        : "transparent",
+
+                color:
+                    searchText &&
+                    msg.message &&
+                    msg.message.toLowerCase().includes(searchText.toLowerCase())
+                        ? "#000"
+                        : "inherit",
+
+                padding: "2px 4px",
+                borderRadius: "4px"
+            }}
+        >
+            {msg.message}
+        </span>
+
+    )
 
 )}
 
 </div>
 
-                {msg.mediaUrl && (
-                    (msg.messageType==="media"||msg.messageType==="image")?(
-                        <img src={msg.mediaUrl} width="200"
-                        style={{cursor:"pointer",maxWidth:"240px",borderRadius:"10px", display:"block", marginTop: msg.message ? "8px" : "0"}}
-                        onClick={()=>setOpenMedia({
-                            url:msg.mediaUrl,
-                            type:"image"
-                        })
-                    }/>
-                    ):(
-                        <video src={msg.mediaUrl} width="200" controls
-                        style={{cursor:"pointer",maxWidth:"240px",borderRadius:"10px", display:"block", marginTop: msg.message ? "8px" : "0"}}
-                        onClick={()=>
-                            setOpenMedia({
-                                url:msg.mediaUrl,
-                                type:"video"
-                            })
-                        }/>
-                    )
-                )}
+             {!msg.deletedForEveryone && msg.mediaUrl && (
 
-                <div className="msg-time">
-                    {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    {isMe && <span style={{marginLeft: "5px", color: status === "seen" ? "#60a5fa" : "inherit"}}>{statusIcon}</span>}
+    msg.messageType === "image" ? (
+
+        <img
+            src={msg.mediaUrl}
+            width="200"
+            style={{
+                cursor: "pointer",
+                maxWidth: "240px",
+                borderRadius: "10px",
+                display: "block",
+                marginTop: msg.message ? "8px" : "0"
+            }}
+            onClick={() =>
+                setOpenMedia({
+                    url: msg.mediaUrl,
+                    type: "image"
+                })
+            }
+        />
+
+    ) : msg.messageType === "video" ? (
+
+        <video
+            src={msg.mediaUrl}
+            width="200"
+            controls
+            style={{
+                cursor: "pointer",
+                maxWidth: "240px",
+                borderRadius: "10px",
+                display: "block",
+                marginTop: msg.message ? "8px" : "0"
+            }}
+        />
+
+    ) : msg.messageType === "document" ? (
+
+        <a
+            href={msg.mediaUrl}
+            download={msg.fileName}
+            target="_blank"
+            rel="noreferrer"
+            style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "10px",
+                marginTop: "8px",
+                padding: "10px",
+                background: "#2a3942",
+                borderRadius: "8px",
+                color: "white",
+                textDecoration: "none"
+            }}
+        >
+            <span style={{ fontSize: "28px" }}>📄</span>
+
+            <div>
+                <div>{msg.fileName || "Document"}</div>
+
+                <div
+                    style={{
+                        fontSize: "12px",
+                        color: "#aaa"
+                    }}
+                >
+                    Click to open
                 </div>
+            </div>
+        </a>
+
+    ) : null
+
+)}
+
+           {!msg.deletedForEveryone && (
+    <div className="msg-time">
+        {new Date(msg.createdAt).toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit"
+        })}
+
+        {msg.edited && (
+            <span
+                style={{
+                    marginLeft: "6px",
+                    fontStyle: "italic",
+                    fontSize: "11px"
+                }}
+            >
+                (edited)
+            </span>
+        )}
+
+        {isMe && (
+            <span
+                style={{
+                    marginLeft: "5px",
+                    color: status === "seen" ? "#60a5fa" : "inherit"
+                }}
+            >
+                {statusIcon}
+            </span>
+        )}
+    </div>
+        
+)}
+{msg.reactions?.length > 0 && (() => {
+
+    const grouped = {};
+
+    msg.reactions.forEach(reaction => {
+        grouped[reaction.emoji] = (grouped[reaction.emoji] || 0) + 1;
+    });
+
+    return (
+        <div
+            style={{
+                display: "flex",
+                gap: "6px",
+                marginTop: "4px",
+                flexWrap: "wrap"
+            }}
+        >
+            {Object.entries(grouped).map(([emoji, count]) => {
+
+    const reactedByMe = msg.reactions.some(
+        reaction =>
+            reaction.user === currentUser.email &&
+            reaction.emoji === emoji
+    );
+
+    return (
+      <span
+    key={emoji}
+    onClick={() => {
+
+     const users = msg.reactions
+    .filter(r => r.emoji === emoji)
+    .map(r =>r.name|| r.user);
+
+        setReactionPopup({
+            emoji,
+            users
+        });
+
+        setShowReactionPopup(true);
+
+    }}
+    style={{
+        cursor: "pointer",
+        background: reactedByMe
+            ? "#25D366"
+            : "#2a3942",
+
+        color: reactedByMe
+            ? "black"
+            : "white",
+
+        borderRadius: "12px",
+        padding: "3px 10px",
+        fontSize: "14px",
+        display: "flex",
+        alignItems: "center",
+        gap: "4px",
+        fontWeight: reactedByMe
+            ? "bold"
+            : "normal",
+
+        border: reactedByMe
+            ? "1px solid #128C7E"
+            : "none"
+    }}
+>
+            <span>{emoji}</span>
+
+            {count > 1 && (
+                <span
+                    style={{
+                        fontSize: "12px"
+                    }}
+                >
+                    {count}
+                </span>
+            )}
+        </span>
+    );
+
+})}
+        </div>
+    );
+
+})()}
+
             </div>
   
 
@@ -204,104 +423,324 @@ useEffect(()=>{
 
 
             )}
-
-            {showMenu &&
-    createPortal(
-
+            {showReactionPopup && reactionPopup && (
+    <div
+        onClick={() => setShowReactionPopup(false)}
+        style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.4)",
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            zIndex: 9999
+        }}
+    >
         <div
+            onClick={(e) => e.stopPropagation()}
             style={{
-                position: "fixed",
-                left: menuPos.x,
-                top: menuPos.y,
                 background: "#202c33",
                 color: "white",
-                borderRadius: "10px",
-                width: "180px",
-                boxShadow: "0 8px 25px rgba(0,0,0,.45)",
-                overflow: "hidden",
-                zIndex: 999999
+                padding: "20px",
+                borderRadius: "12px",
+                minWidth: "260px"
             }}
         >
+            <h3
+                style={{
+                    marginTop: 0,
+                    textAlign: "center"
+                }}
+            >
+                {reactionPopup.emoji}
+            </h3>
 
+            {reactionPopup.users.map((userEmail, index) => (
+                <div
+                    key={index}
+                    style={{
+                        padding: "8px 0",
+                        borderBottom: "1px solid #444"
+                    }}
+                >
+                    {userEmail}
+                </div>
+            ))}
+
+            <button
+                onClick={() => setShowReactionPopup(false)}
+                style={{
+                    marginTop: "15px",
+                    width: "100%",
+                    padding: "8px",
+                    cursor: "pointer"
+                }}
+            >
+                Close
+            </button>
+        </div>
+    </div>
+)}
+
+ {showMenu &&
+    createPortal(
+
+<>
+    {/* Floating Emoji Bar */}
+    <div
+        style={{
+            position: "fixed",
+          left: Math.min(
+                     menuPos.x,
+                 window.innerWidth - 360
+                    ),
+           top: Math.max(
+                10,
+                 menuPos.y - 70
+                ),
+            background: "#202c33",
+            borderRadius: "30px",
+            padding: "8px 12px",
+            display: "flex",
+            alignItems: "center",
+            gap: "10px",
+            boxShadow: "0 8px 25px rgba(0,0,0,.45)",
+            zIndex: 999999,
+
+        animation: "reactionBarPop .18s ease-out",
+        transformOrigin: "top center"
+        }}
+    >
+        {["😀","😂","😍","😮","😢","🙏","👍","❤️"].map((emoji)=>(
+            <span
+                key={emoji}
+                onClick={()=>{
+                    onReact(msg,emoji);
+                    setShowMenu(false);
+                }}
+                style={{
+                    fontSize:"22px",
+                    cursor:"pointer",
+                    transition:"transform .15s",
+                    borderRadius: "50%",
+                    padding: "4px"
+                }}
+                onMouseEnter={(e)=>{
+                    e.currentTarget.style.transform="scale(1.25)";
+                    e.currentTarget.style.background = "#2f3b43";
+                }}
+                onMouseLeave={(e)=>{
+                    e.currentTarget.style.transform="scale(1)";
+                    e.currentTarget.style.background = "transparent";
+                }}
+            >
+                {emoji}
+            </span>
+        ))}
+    </div>
+
+    {/* Context Menu */}
+    <div
+        style={{
+            position:"fixed",
+            left:menuPos.x,
+            top:menuPos.y,
+            background:"#202c33",
+            color:"white",
+            borderRadius:"10px",
+            width:"190px",
+            boxShadow:"0 8px 25px rgba(0,0,0,.45)",
+            overflow:"hidden",
+            zIndex:999999
+        }}
+    >
+
+        <div
+            onClick={()=>{
+                onReply(msg);
+                setShowMenu(false);
+            }}
+            style={{
+                padding:"12px 18px",
+                cursor:"pointer",
+                transition: "background .15s ease",
+            }}
+            onMouseEnter={(e)=>{
+              e.currentTarget.style.background = "#2f3b43";
+                }}
+
+            onMouseLeave={(e)=>{
+            e.currentTarget.style.background = "transparent";
+            }}
+        >
+            ↩ Reply
+        </div>
+
+        <div
+            onClick={async()=>{
+                try{
+                    await navigator.clipboard.writeText(msg.message);
+                    alert("Message copied!");
+                }catch(err){
+                    alert("Failed to copy message");
+                }
+                setShowMenu(false);
+            }}
+            style={{
+                padding:"12px 18px",
+                cursor:"pointer",
+                transition: "background .15s ease",
+            }}
+                onMouseEnter={(e)=>{
+              e.currentTarget.style.background = "#2f3b43";
+                }}
+
+            onMouseLeave={(e)=>{
+            e.currentTarget.style.background = "transparent";
+            }}
+        
+        >
+            📋 Copy
+        </div>
+
+        {isMe && !msg.deletedForEveryone && msg.messageType==="text" && (
             <div
                 onClick={()=>{
-                    onReply(msg);
+                    onEdit(msg);
                     setShowMenu(false);
                 }}
                 style={{
                     padding:"12px 18px",
-                    cursor:"pointer"
+                    cursor:"pointer",
+                    transition: "background .15s ease",
                 }}
-            >
-                ↩ Reply
-            </div>
+                   onMouseEnter={(e)=>{
+              e.currentTarget.style.background = "#2f3b43";
+                }}
 
-            <div
-                onClick={async()=>{
-                    try{
-                        await navigator.clipboard.writeText(msg.message);
-                        alert("Message copied!");
-                    }catch(err){
-                        alert("Failed to copy message");
-                    }
-                    setShowMenu(false)
-                }}
-                style={{
-                    padding:"12px 18px",
-                    cursor:"pointer"
-                }}
+            onMouseLeave={(e)=>{
+            e.currentTarget.style.background = "transparent";
+            }}
+                
             >
-                📋 Copy
+                ✏️ Edit
             </div>
+        )}
 
-            <div
-                onClick={async()=>{
-                    const data=await starMessage(token,msg._id);
-                    if(data.message){
-                        
-                        setMessages(prev=>
-                            prev.map(m=>
-                                m._id===msg._id
-                                ?{...m,starred:data.starred}
-                                :m
-                            )
-                        );
-                        setShowMenu(false);
-                    }
-                }}
-                style={{
-                    padding:"12px 18px",
-                    cursor:"pointer"
-                }}
-            >
-               {msg.starred ? "⭐ Unstar" : "⭐ Star"}
-            </div>
+        <div
+            onClick={async()=>{
+                const data=await starMessage(token,msg._id);
 
+                if(data.message){
+                    setMessages(prev=>
+                        prev.map(m=>
+                            m._id===msg._id
+                                ? {...m,starred:data.starred}
+                                : m
+                        )
+                    );
+                }
+
+                setShowMenu(false);
+            }}
+            style={{
+                padding:"12px 18px",
+                cursor:"pointer",
+                 transition: "background .15s ease",
+            }}
+               onMouseEnter={(e)=>{
+              e.currentTarget.style.background = "#2f3b43";
+                }}
+
+            onMouseLeave={(e)=>{
+            e.currentTarget.style.background = "transparent";
+            }}
+        >
+            {msg.starred ? "⭐ Unstar" : "⭐ Star"}
+        </div>
+
+        <div
+            onClick={()=>{
+                setShowForward(true);
+                setShowMenu(false);
+            }}
+            style={{
+                padding:"12px 18px",
+                cursor:"pointer",
+                transition: "background .15s ease",
+            }}
+                   onMouseEnter={(e)=>{
+              e.currentTarget.style.background = "#2f3b43";
+                }}
+
+            onMouseLeave={(e)=>{
+            e.currentTarget.style.background = "transparent";
+            }}
+                
+        >
+            ↪ Forward
+        </div>
+
+        <div
+            onClick={()=>{
+                onDeleteForMe(msg);
+                setShowMenu(false);
+            }}
+            style={{
+                padding:"12px 18px",
+                cursor:"pointer",
+                color:"#ef4444",
+                transition: "background .15s ease",
+            }}
+               onMouseEnter={(e)=>{
+              e.currentTarget.style.background = "#2f3b43";
+                }}
+
+            onMouseLeave={(e)=>{
+            e.currentTarget.style.background = "transparent";
+            }}
+        >
+            🗑 Delete for Me
+        </div>
+
+        {isMe && !msg.deletedForEveryone && (
             <div
                 onClick={()=>{
-                    setShowForward(true);
+                    onDeleteForEveryone(msg);
                     setShowMenu(false);
                 }}
                 style={{
                     padding:"12px 18px",
-                    cursor:"pointer"
+                    cursor:"pointer",
+                    color:"#ef4444",
+                     transition: "background .15s ease",
                 }}
+                  onMouseEnter={(e)=>{
+              e.currentTarget.style.background = "#2f3b43";
+                }}
+
+            onMouseLeave={(e)=>{
+            e.currentTarget.style.background = "transparent";
+            }}
             >
-                ↪ Forward
+                🚫 Delete for Everyone
             </div>
+        )}
 
-        </div>,
+    </div>
 
-        document.body
+</>,
 
-    )
+document.body
+
+)
 }
 {showForward && (
     <ForwardModal
     
     onClose={()=>setShowForward(false)}
     onForward={(user)=>{
-        console.log("Forward to:",user);
+        onForwardMessage(user,msg);
         setShowForward(false);
     }}
     />

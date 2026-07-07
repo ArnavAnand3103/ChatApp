@@ -31,8 +31,21 @@ export default function Chat({
     const [currentMatch,setCurrentMatch]=useState(0);
     const [statusMap, setStatusMap] = useState({});
     const [isTyping, setIsTyping] = useState(false);
+
     const [file, setFile] = useState(null);
     const [preview, setPreview] = useState(null);
+
+    const [isRecording, setIsRecording] = useState(false);
+    const [recordingTime, setRecordingTime] = useState(0);
+    const [isPaused, setIsPaused] = useState(false);
+
+    const [voiceBlob, setVoiceBlob] = useState(null);
+    const [voicePreview, setVoicePreview] = useState("");
+
+    const mediaRecorderRef = useRef(null);
+    const audioChunksRef = useRef([]);
+    const timerRef = useRef(null);
+
     const bottomRef=useRef(null);
     const messageRefs=useRef([]);
     const channelRef=useRef(null);
@@ -283,7 +296,8 @@ const reactionHandler = ({
     reactions,
     reactedBy,
     emoji,
-    messageOwner
+    messageOwner,
+    action
 }) => {
 
    
@@ -305,7 +319,7 @@ const reactionHandler = ({
     if (
         reactedBy !== user.email &&
         messageOwner === user.email &&
-        isNewReaction
+       action!=="removed"
     ) {
         showNotification(
             "New Reaction",
@@ -491,6 +505,216 @@ if (file) {
         setFile(selected);
         setPreview(URL.createObjectURL(selected));
     };
+    const startRecording = async () => {
+
+    try {
+
+        const stream = await navigator.mediaDevices.getUserMedia({
+            audio: true
+        });
+
+        const recorder = new MediaRecorder(stream);
+
+        mediaRecorderRef.current = recorder;
+        audioChunksRef.current = [];
+
+        recorder.ondataavailable = (event) => {
+
+            if (event.data.size > 0) {
+                audioChunksRef.current.push(event.data);
+            }
+
+        };
+
+        recorder.onstop = () => {
+
+    const blob = new Blob(
+        audioChunksRef.current,
+        {
+            type: "audio/webm"
+        }
+    );
+
+    setVoiceBlob(blob);
+
+    setVoicePreview(
+        URL.createObjectURL(blob)
+    );
+
+    clearInterval(timerRef.current);
+
+    mediaRecorderRef.current.stream
+        .getTracks()
+        .forEach(track => track.stop());
+
+};
+
+        recorder.start();
+
+        setIsRecording(true);
+        setIsPaused(false);
+        setRecordingTime(0);
+
+        timerRef.current = setInterval(() => {
+
+            setRecordingTime(prev => prev + 1);
+
+        }, 1000);
+
+    } catch (err) {
+
+        console.error(err);
+        alert("Microphone permission denied.");
+
+    }
+
+};
+            const deleteRecording = () => {
+
+                 if (mediaRecorderRef.current) {
+
+              mediaRecorderRef.current.stop();
+
+             mediaRecorderRef.current.stream
+                    .getTracks()
+                   .forEach(track => track.stop());
+
+            }
+
+                 clearInterval(timerRef.current);
+
+                 audioChunksRef.current = [];
+
+                 setIsRecording(false);
+                 setIsPaused(false);
+                 setRecordingTime(0);
+
+            };
+    const togglePauseRecording = () => {
+
+         if (!mediaRecorderRef.current) return;
+
+             if (isPaused) {
+
+                 mediaRecorderRef.current.resume();
+
+                 timerRef.current = setInterval(() => {
+                     setRecordingTime(prev => prev + 1);
+                     }, 1000);
+
+                 setIsPaused(false);
+
+                  } else {
+
+                  mediaRecorderRef.current.pause();
+
+                 clearInterval(timerRef.current);
+
+              setIsPaused(true);
+
+                  }
+
+            };
+
+  const stopRecording = () => {
+
+    if (!mediaRecorderRef.current) return;
+
+    mediaRecorderRef.current.onstop = async () => {
+
+        const blob = new Blob(audioChunksRef.current, {
+            type: "audio/webm"
+        });
+
+        setVoiceBlob(blob);
+
+        const preview = URL.createObjectURL(blob);
+
+        setVoicePreview(preview);
+
+        clearInterval(timerRef.current);
+
+        mediaRecorderRef.current.stream
+            .getTracks()
+            .forEach(track => track.stop());
+
+        await sendVoiceMessage(blob);
+
+    };
+
+    mediaRecorderRef.current.stop();
+
+    setIsRecording(false);
+
+};
+
+    const sendVoiceMessage = async (blob) => {
+
+    if (!blob) return;
+
+    const mediaUrl = await new Promise((resolve, reject) => {
+
+        const reader = new FileReader();
+
+        reader.onload = () => resolve(reader.result);
+
+        reader.onerror = reject;
+
+        reader.readAsDataURL(blob);
+
+    });
+
+    const clientMessageId = Date.now().toString();
+
+    if (selectedUser?.isGroup) {
+
+        socket.emit("groupMessage", {
+
+            groupId: selectedUser._id,
+            message: "",
+            messageType: "voice",
+            mediaUrl,
+            clientMessageId
+
+        });
+
+    } else {
+
+        socket.emit("privateMessage", {
+
+            to: selectedUser.email,
+            message: "",
+            messageType: "voice",
+            mediaUrl,
+            clientMessageId
+
+        });
+
+        setMessages(prev => [
+    ...prev,
+    {
+        from: user.email,
+        to: selectedUser.email,
+        message: "",
+        messageType: "voice",
+        mediaUrl,
+        clientMessageId,
+        createdAt: new Date(),
+        status: "sent"
+    }
+]);
+
+setStatusMap(prev => ({
+    ...prev,
+    [clientMessageId]: "sent"
+}));
+
+    }
+
+    setVoiceBlob(null);
+    setVoicePreview("");
+
+};
     const handleForwardMessage=(targetUser,message)=>{
         if(!socket) return;
         if(targetUser.isGroup){
@@ -894,10 +1118,83 @@ const handleReaction = (msg, emoji) => {
                     style={{display:"none"}}
                 />
 
-                <button className="send-btn" onClick={sendMessage}>
-                    ➤
-                </button>
+                {isRecording ? (
+
+    <div
+        style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "10px"
+        }}
+    >
+
+        <button
+            className="send-btn"
+            onClick={deleteRecording}
+        >
+            🗑
+        </button>
+
+        <span>
+            {Math.floor(recordingTime / 60)}
+            :
+            {String(recordingTime % 60).padStart(2, "0")}
+        </span>
+
+        <button
+            className="send-btn"
+            onClick={togglePauseRecording}
+        >
+            {isPaused ? "▶" : "⏸"}
+        </button>
+
+        <button
+            className="send-btn"
+            onClick={stopRecording}
+        >
+            ➤
+        </button>
+
+    </div>
+
+) : text.trim() || file ? (
+
+    <button
+        className="send-btn"
+        onClick={sendMessage}
+    >
+        ➤
+    </button>
+
+) : (
+
+    <button
+        className="send-btn"
+        onClick={startRecording}
+    >
+        🎤
+    </button>
+
+)}
             </div>
+     {voicePreview && (
+
+    <div
+        style={{
+            padding: "10px",
+            margin: "10px"
+        }}
+    >
+        <audio
+            controls
+            src={voicePreview}
+            style={{
+                width: "100%"
+            }}
+        />
+    </div>
+
+)}       
         </>
     );
 }

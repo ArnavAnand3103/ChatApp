@@ -236,7 +236,7 @@ io.on("connection", (socket) => {
         const from = users[socket.id];
         const targetEmail = normalizeEmail(to);
         const senderEmail = normalizeEmail(from?.email);
-        const allowedMsgTypes = ["text", "image", "video", "document"];
+        const allowedMsgTypes = ["text", "image", "video", "document","voice"];
         const safeMessageType = allowedMsgTypes.includes(messageType) ? messageType : "text";
         const text = String(message || "").trim();
         const media = String(mediaUrl || "");
@@ -276,7 +276,8 @@ io.on("connection", (socket) => {
     if (
     (safeMessageType === "image" ||
      safeMessageType === "video" ||
-     safeMessageType === "document") &&
+     safeMessageType === "document" ||
+     safeMessageType === "voice") &&
     !media
 ) {
     socket.emit("messageStatus", {
@@ -558,11 +559,29 @@ io.on("connection", (socket) => {
             if(!group) return;
 
             const sender=socket.user.email;
-            const allowedTypes = ["text", "image", "video", "document"];
+            const allowedTypes = ["text", "image", "video", "document","voice"];
 
             const safeMessageType = allowedTypes.includes(messageType)
             ? messageType
             : "text";
+
+            const media = String(mediaUrl || "");
+
+                        if (
+                     (
+               safeMessageType === "image" ||
+                 safeMessageType === "video" ||
+             safeMessageType === "document" ||
+              safeMessageType === "voice"
+             ) &&
+             !media
+            ) {
+           socket.emit("messageStatus", {
+             ok: false,
+             message: "Media payload missing"
+             });
+             return;
+            }
 
             const saved=await Message.create({
                 from:sender,
@@ -632,10 +651,11 @@ io.on("connection", (socket) => {
         const me = socket.user.email;
 
         // Find existing reaction by this user
+        let action="";
         const existing = message.reactions.find(
             reaction => reaction.user === me
         );
-        let isNewReaction = false;
+        
 
         if (existing) {
 
@@ -645,11 +665,13 @@ io.on("connection", (socket) => {
                 message.reactions = message.reactions.filter(
                     reaction => reaction.user !== me
                 );
+                action="removed";
 
             } else {
 
                 // Change reaction
                 existing.emoji = emoji;
+                action="changed";
 
             }
 
@@ -661,7 +683,7 @@ io.on("connection", (socket) => {
                 name: socket.user.name,
                 emoji
             });
-            isNewReaction = true;
+            action="added";
 
         }
 
@@ -675,7 +697,7 @@ io.on("connection", (socket) => {
             emoji,
 
     messageOwner: message.from,
-     isNewReaction
+     action
         };
 
         // ---------- GROUP ----------

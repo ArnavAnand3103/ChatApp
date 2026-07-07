@@ -1,5 +1,6 @@
-import {useState,useEffect} from 'react';
+import {useState,useEffect,useRef} from 'react';
 import {createPortal} from 'react-dom';
+import VoiceMessage from "./VoiceMessage";
 
 import MediaModal from './MediaModal';
 import { starMessage } from "../../services/api";
@@ -12,6 +13,9 @@ export default function Message({msg,currentUser,status,onReply,onEdit, onDelete
     const [openMedia,setOpenMedia]=useState(null);
     const [showForward,setShowForward]=useState(false);
     const [showMenu,setShowMenu]=useState(false);
+
+   
+  
     const [menuPos,setMenuPos]=useState({
         x:0,
         y:0
@@ -38,6 +42,9 @@ useEffect(()=>{
  if (status === "sent" || status === "offline") statusIcon = "✔";       
      if (status === "delivered") statusIcon = "✔✔";
      if(status==="seen") statusIcon="✔✔";
+
+     
+  
 
     return(
         <>
@@ -173,7 +180,7 @@ useEffect(()=>{
         <span style={{fontSize:"14px"}}>⭐</span>
     )}
 
-  {msg.deletedForEveryone ? (
+ {msg.deletedForEveryone ? (
 
     <span
         style={{
@@ -186,7 +193,7 @@ useEffect(()=>{
 
 ) : (
 
-    msg.messageType !== "media" && (
+    msg.messageType === "text" && (
 
         <span
             style={{
@@ -254,7 +261,16 @@ useEffect(()=>{
             }}
         />
 
-    ) : msg.messageType === "document" ? (
+    ): msg.messageType === "voice" ? (
+
+     <VoiceMessage
+        mediaUrl={msg.mediaUrl}
+        isMe={isMe}
+    />
+
+
+)
+    : msg.messageType === "document" ? (
 
         <a
             href={msg.mediaUrl}
@@ -332,6 +348,7 @@ useEffect(()=>{
     msg.reactions.forEach(reaction => {
         grouped[reaction.emoji] = (grouped[reaction.emoji] || 0) + 1;
     });
+
 
     return (
         <div
@@ -576,32 +593,33 @@ useEffect(()=>{
             ↩ Reply
         </div>
 
-        <div
-            onClick={async()=>{
-                try{
-                    await navigator.clipboard.writeText(msg.message);
-                    alert("Message copied!");
-                }catch(err){
-                    alert("Failed to copy message");
-                }
-                setShowMenu(false);
-            }}
-            style={{
-                padding:"12px 18px",
-                cursor:"pointer",
-                transition: "background .15s ease",
-            }}
-                onMouseEnter={(e)=>{
-              e.currentTarget.style.background = "#2f3b43";
-                }}
+       {msg.messageType === "text" && (
+    <div
+        onClick={async () => {
+            try {
+                await navigator.clipboard.writeText(msg.message);
+                alert("Message copied!");
+            } catch (err) {
+                alert("Failed to copy message");
+            }
 
-            onMouseLeave={(e)=>{
+            setShowMenu(false);
+        }}
+        style={{
+            padding: "12px 18px",
+            cursor: "pointer",
+            transition: "background .15s ease",
+        }}
+        onMouseEnter={(e) => {
+            e.currentTarget.style.background = "#2f3b43";
+        }}
+        onMouseLeave={(e) => {
             e.currentTarget.style.background = "transparent";
-            }}
-        
-        >
-            📋 Copy
-        </div>
+        }}
+    >
+        📋 Copy
+    </div>
+)}
 
         {isMe && !msg.deletedForEveryone && msg.messageType==="text" && (
             <div

@@ -3,7 +3,8 @@ import Message from './Message';
 import { fetchMessages ,fetchGroupMessages} from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 import { showNotification } from '../../utils/notification';
-import {useRef} from 'react'
+import {useRef} from 'react';
+import { getCurrentLocation } from "../../utils/location";
 
 export default function Chat({
     selectedUser,
@@ -22,6 +23,10 @@ export default function Chat({
     const { user, token } = useAuth();
 
     const [messages, setMessages] = useState([]);
+    const [showLocationMenu, setShowLocationMenu] = useState(false);
+    const [showLiveLocationModal, setShowLiveLocationModal] = useState(false);
+    const [isSharingLiveLocation, setIsSharingLiveLocation] = useState(false);
+
     const [text, setText] = useState("");
     const [replyMessage,setReplyMessage]=useState(null);
     const [editingMessage, setEditingMessage] = useState(null);
@@ -45,6 +50,10 @@ export default function Chat({
     const mediaRecorderRef = useRef(null);
     const audioChunksRef = useRef([]);
     const timerRef = useRef(null);
+
+    const liveLocationWatchRef = useRef(null);
+    const liveLocationIdRef = useRef(null);
+    const liveLocationTimerRef = useRef(null);
 
     const bottomRef=useRef(null);
     const messageRefs=useRef([]);
@@ -335,6 +344,59 @@ const reactionHandler = ({
         socket.on("messageDeletedForMe", deleteHandler);
         socket.on("messageDeletedForEveryone", deleteEveryoneHandler);
         socket.on("messageReaction", reactionHandler);
+        socket.on("liveLocationUpdated", (data) => {
+
+    setMessages(prev =>
+        prev.map(msg =>
+            msg.liveLocationId === data.liveLocationId
+                ? {
+                    ...msg,
+                    latitude: data.latitude,
+                    longitude: data.longitude,
+                    expiresAt: data.expiresAt,
+                    isLive: true
+                }
+                : msg
+        )
+    );
+
+});
+socket.on("liveLocationStopped", ({ liveLocationId,from }) => {
+
+    setMessages(prev =>
+
+        prev.map(msg =>
+
+            msg.liveLocationId === liveLocationId
+
+                ? {
+
+                    ...msg,
+
+                    isLive: false
+
+                }
+
+                : msg
+
+        )
+
+    );
+     showNotification(
+        "Live Location",
+        `${from} stopped sharing live location 🛑`
+    );
+
+});
+        socket.on("liveLocationStarted", ({ from }) => {
+
+         showNotification(
+        "Live Location",
+        `${from} started sharing live location 🌍`
+    );
+    
+
+});
 
         return () => {
             socket.off("showTyping", typingHandler);
@@ -344,6 +406,12 @@ const reactionHandler = ({
             socket.off("messageDeletedForMe", deleteHandler);
             socket.off("messageDeletedForEveryone", deleteEveryoneHandler);
             socket.off("messageReaction", reactionHandler);
+            socket.off("liveLocationUpdated");
+            socket.off("liveLocationStopped");
+            socket.off("liveLocationStarted");
+
+
+           
         };
 
     }, [socket, selectedUser]);
@@ -396,6 +464,219 @@ const reactionHandler = ({
             block:"center"
         });
     },[currentMatchValue,matchedIndexesValue]);
+
+    const sendLocation = async () => {
+
+    try {
+
+        const location = await getCurrentLocation();
+
+        if (selectedUser?.isGroup) {
+
+            socket.emit("groupMessage", {
+
+                groupId: selectedUser._id,
+
+                messageType: "location",
+
+                latitude: location.latitude,
+                longitude: location.longitude,
+
+                locationName: "",
+
+                isLive: false
+
+            });
+
+        } else {
+
+            socket.emit("privateMessage", {
+
+                to: selectedUser.email,
+
+                messageType: "location",
+
+                latitude: location.latitude,
+                longitude: location.longitude,
+
+                locationName: "",
+
+                isLive: false
+
+            });
+
+        }
+
+    } catch (err) {
+
+        console.error(err);
+
+        alert("Unable to get location");
+
+    }
+
+};
+const startLiveLocation = (minutes) => {
+
+    if (!navigator.geolocation) {
+
+        alert("Geolocation is not supported.");
+
+        return;
+
+    }
+
+    const liveLocationId = Date.now().toString();
+
+    liveLocationIdRef.current = liveLocationId;
+
+    const expiresAt =
+        Date.now() + minutes * 60 * 1000;
+      liveLocationTimerRef.current = setTimeout(() => {
+
+    stopLiveLocation();
+
+}, minutes * 60 * 1000);
+    liveLocationWatchRef.current =
+        navigator.geolocation.watchPosition(
+
+            (position) => {
+
+                const latitude =
+                    position.coords.latitude;
+
+                const longitude =
+                    position.coords.longitude;
+
+                const liveMessage = {
+
+    _id: liveLocationId,
+
+    from: user.email,
+
+    to: selectedUser?.isGroup
+    ? selectedUser._id
+    : selectedUser.email,
+
+    messageType: "location",
+
+    latitude,
+
+    longitude,
+
+    locationName: "Live Location",
+
+    isLive: true,
+
+    liveLocationId,
+
+    expiresAt,
+
+    createdAt: new Date()
+
+};
+        setMessages(prev => {
+
+    const exists = prev.some(
+        msg => msg.liveLocationId === liveLocationId
+    );
+
+    if (exists) return prev;
+
+    return [...prev, liveMessage];
+
+});
+
+                if (selectedUser?.isGroup) {
+
+                    socket.emit("groupLiveLocation", {
+
+                        groupId: selectedUser._id,
+
+                        latitude,
+
+                        longitude,
+
+                        liveLocationId,
+
+                        expiresAt
+
+                    });
+
+                }
+
+                else {
+
+                    socket.emit("privateLiveLocation", {
+
+                        to: selectedUser.email,
+
+                        latitude,
+
+                        longitude,
+
+                        liveLocationId,
+
+                        expiresAt
+
+                    });
+
+                }
+
+            },
+
+            (err) => {
+
+                console.error(err);
+
+            },
+
+            {
+
+                enableHighAccuracy: true,
+
+                maximumAge: 0,
+
+                timeout: 10000
+
+            }
+
+        );
+        setIsSharingLiveLocation(true);
+
+};
+const stopLiveLocation = () => {
+
+    if (!isSharingLiveLocation) return;
+
+    if (liveLocationWatchRef.current !== null) {
+
+        navigator.geolocation.clearWatch(
+            liveLocationWatchRef.current
+        );
+
+        liveLocationWatchRef.current = null;
+
+    }
+
+    // Clear the auto-stop timer
+    if (liveLocationTimerRef.current) {
+
+        clearTimeout(liveLocationTimerRef.current);
+
+        liveLocationTimerRef.current = null;
+
+    }
+
+    setIsSharingLiveLocation(false);
+
+    socket.emit("stopLiveLocation", {
+
+        liveLocationId: liveLocationIdRef.current
+
+    });
+
+};
 const sendMessage = async () => {
 
     if (editingMessage) {
@@ -411,18 +692,45 @@ const sendMessage = async () => {
         return;
     }
 
-    if (selectedUser?.isGroup) {
+ if (selectedUser?.isGroup) {
 
-        if (!text.trim()) return;
+    if (!text.trim()) return;
 
-        socket.emit("groupMessage", {
-            groupId: selectedUser._id,
-            message: text
-        });
+  const replyData = {
+        replyTo: replyMessage?._id || null,
 
-        setText("");
-        return;
-    }
+        replyText:
+            replyMessage?.messageType === "voice"
+                ? "🎤 Voice message"
+            : replyMessage?.messageType === "image"
+                ? "🖼 Photo"
+            : replyMessage?.messageType === "video"
+                ? "🎥 Video"
+            : replyMessage?.messageType === "document"
+                ? `📄 ${replyMessage.fileName || "Document"}`
+            : replyMessage?.messageType === "location"
+        ? (
+            replyMessage?.isLive
+                ? "🌍 Live Location"
+                : "📍 Current Location"
+          )
+           : replyMessage?.message || "",
+
+        replySender: replyMessage?.user || ""
+    };
+
+    socket.emit("groupMessage", {
+        groupId: selectedUser._id,
+        message: text,
+        ...replyData
+    });
+
+   
+
+    setReplyMessage(null);
+    setText("");
+    return;
+}
 
     if (isBlocked) return;
 
@@ -466,9 +774,24 @@ if (file) {
             fileName: file?.name || "",
             clientMessageId,
 
-             replyTo: replyMessage?._id || null,
-            replyText: replyMessage?.message || "",
-            replySender: replyMessage?.user || ""
+            replyTo: replyMessage?._id || null,
+replyText:
+    replyMessage?.messageType === "voice"
+        ? "🎤 Voice message"
+    : replyMessage?.messageType === "image"
+        ? "🖼 Photo"
+    : replyMessage?.messageType === "video"
+        ? "🎥 Video"
+    : replyMessage?.messageType === "document"
+        ? `📄 ${replyMessage.fileName || "Document"}`
+    :replyMessage?.messageType === "location"
+        ? (
+            replyMessage?.isLive
+                ? "🌍 Live Location"
+                : "📍 Current Location"
+          )
+    : replyMessage?.message || "",
+        replySender: replyMessage?.user || ""
         };
 
         socket.emit("privateMessage", msg);
@@ -647,8 +970,7 @@ if (file) {
     setIsRecording(false);
 
 };
-
-    const sendVoiceMessage = async (blob) => {
+const sendVoiceMessage = async (blob) => {
 
     if (!blob) return;
 
@@ -666,83 +988,161 @@ if (file) {
 
     const clientMessageId = Date.now().toString();
 
+    const replyData = {
+        replyTo: replyMessage?._id || null,
+
+        replyText:
+            replyMessage?.messageType === "voice"
+                ? "🎤 Voice message"
+            : replyMessage?.messageType === "image"
+                ? "🖼 Photo"
+            : replyMessage?.messageType === "video"
+                ? "🎥 Video"
+            : replyMessage?.messageType === "document"
+                ? `📄 ${replyMessage.fileName || "Document"}`
+             : replyMessage?.messageType === "location"
+        ? (
+            replyMessage?.isLive
+                ? "🌍 Live Location"
+                : "📍 Location"
+          )
+            : replyMessage?.message || "",
+
+        replySender: replyMessage?.user || ""
+    };
+
+    // ---------------- GROUP ----------------
+
     if (selectedUser?.isGroup) {
 
         socket.emit("groupMessage", {
-
             groupId: selectedUser._id,
             message: "",
             messageType: "voice",
             mediaUrl,
-            clientMessageId
-
+            clientMessageId,
+            ...replyData
         });
 
-    } else {
+     
+
+        setStatusMap(prev => ({
+            ...prev,
+            [clientMessageId]: "sent"
+        }));
+
+    }
+
+    // ---------------- PRIVATE ----------------
+
+    else {
 
         socket.emit("privateMessage", {
-
             to: selectedUser.email,
             message: "",
             messageType: "voice",
             mediaUrl,
-            clientMessageId
-
+            clientMessageId,
+            ...replyData
         });
 
         setMessages(prev => [
-    ...prev,
-    {
-        from: user.email,
-        to: selectedUser.email,
-        message: "",
-        messageType: "voice",
-        mediaUrl,
-        clientMessageId,
-        createdAt: new Date(),
-        status: "sent"
-    }
-]);
+            ...prev,
+            {
+                from: user.email,
+                to: selectedUser.email,
+                message: "",
+                messageType: "voice",
+                mediaUrl,
+                clientMessageId,
+                createdAt: new Date(),
+                status: "sent",
+                ...replyData
+            }
+        ]);
 
-setStatusMap(prev => ({
-    ...prev,
-    [clientMessageId]: "sent"
-}));
+        setStatusMap(prev => ({
+            ...prev,
+            [clientMessageId]: "sent"
+        }));
 
     }
 
     setVoiceBlob(null);
     setVoicePreview("");
+    setReplyMessage(null);
 
 };
     const handleForwardMessage=(targetUser,message)=>{
         if(!socket) return;
         if(targetUser.isGroup){
-            socket.emit("groupMessage",{
-                groupId:targetUser._id,
-                message:message.message,
-                messageType: message.messageType || "text",
-                mediaUrl: message.mediaUrl || "",
-                fileName: message.fileName || "",
-                forwarded: true
-            });
+           socket.emit("groupMessage", {
+
+    groupId: targetUser._id,
+
+    message: message.message,
+
+    messageType: message.messageType || "text",
+
+    mediaUrl: message.mediaUrl || "",
+
+    fileName: message.fileName || "",
+
+    latitude: message.latitude,
+
+    longitude: message.longitude,
+
+    locationName: message.locationName || "",
+
+    isLive: message.isLive || false,
+
+    liveLocationId: message.liveLocationId || "",
+
+    expiresAt: message.expiresAt || null,
+
+    forwarded: true
+
+});
            showNotification("Forward", "Message forwarded");
             return;
         }
 
         const clientMessageId=Date.now().toString();
-        const forwardMsg={
-            to:targetUser.email,
-            message:message.message,
-            messageType:message.messageType||"text",
-            mediaUrl:message.mediaUrl||"",
-            fileName:message.fileName||"",
-            clientMessageId,
-            replyTo:null,
-            replyText:"",
-            replySender:"",
-            forwarded:true
-        };
+        const forwardMsg = {
+
+    to: targetUser.email,
+
+    message: message.message,
+
+    messageType: message.messageType || "text",
+
+    mediaUrl: message.mediaUrl || "",
+
+    fileName: message.fileName || "",
+
+    latitude: message.latitude,
+
+    longitude: message.longitude,
+
+    locationName: message.locationName || "",
+
+    isLive: message.isLive || false,
+
+    liveLocationId: message.liveLocationId || "",
+
+    expiresAt: message.expiresAt || null,
+
+    clientMessageId,
+
+    replyTo: null,
+
+    replyText: "",
+
+    replySender: "",
+
+    forwarded: true
+
+};
         socket.emit("privateMessage",forwardMsg);
        
         showNotification("Forward", "Message forwarded");
@@ -899,6 +1299,7 @@ const handleReaction = (msg, emoji) => {
                         searchText={searchTextValue}
                         setMessages={setMessages}
                         onForwardMessage={handleForwardMessage}
+                        stopLiveLocation={stopLiveLocation}
 
                     />
                     </div>
@@ -1006,14 +1407,39 @@ const handleReaction = (msg, emoji) => {
                 Replying to {replyMessage.user}
             </div>
 
-            <div
-                style={{
-                    color: "#ddd",
-                    fontSize: "14px"
-                }}
-            >
-                {replyMessage.message}
-            </div>
+         <div
+    style={{
+        color: "#ddd",
+        fontSize: "14px",
+        display: "flex",
+        alignItems: "center",
+        gap: "6px"
+    }}
+>
+    {replyMessage.messageType === "voice" ? (
+        <>
+            <span>🎤</span>
+            <span>Voice message</span>
+        </>
+    ) : replyMessage.messageType === "image" ? (
+        <>
+            <span>🖼️</span>
+            <span>Photo</span>
+        </>
+    ) : replyMessage.messageType === "video" ? (
+        <>
+            <span>🎥</span>
+            <span>Video</span>
+        </>
+    ) : replyMessage.messageType === "document" ? (
+        <>
+            <span>📄</span>
+            <span>{replyMessage.fileName || "Document"}</span>
+        </>
+    ) : (
+        <span>{replyMessage.message}</span>
+    )}
+</div>
 
         </div>
 
@@ -1088,7 +1514,77 @@ const handleReaction = (msg, emoji) => {
         )}
 
             <div className="input-bar">
-                <button className="send-btn" title="Send image" onClick={() => document.getElementById('mediaInput').click()}>+</button>
+      <div style={{ position: "relative" }}>
+
+    <button
+        className="send-btn"
+        onClick={() => setShowLocationMenu(prev => !prev)}
+        title="Location"
+    >
+        📍
+    </button>
+    {isSharingLiveLocation && (
+
+    <button
+        className="send-btn"
+        onClick={stopLiveLocation}
+        title="Stop Live Location"
+    >
+        ⛔
+    </button>
+
+)}
+
+    {showLocationMenu && (
+
+        <div
+            style={{
+                position: "absolute",
+                bottom: "55px",
+                left: "0",
+                background: "#202c33",
+                borderRadius: "12px",
+                overflow: "hidden",
+                boxShadow: "0 4px 18px rgba(0,0,0,.4)",
+                minWidth: "180px",
+                zIndex: 1000
+            }}
+        >
+
+            <div
+                onClick={()=>{
+                    sendLocation();
+                    setShowLocationMenu(false);
+                }}
+                style={{
+                    padding:"12px",
+                    cursor:"pointer"
+                }}
+            >
+                📍 Current Location
+            </div>
+
+            <div
+                onClick={()=>{
+                    setShowLiveLocationModal(true);
+                    setShowLocationMenu(false);
+                }}
+                style={{
+                    padding:"12px",
+                    cursor:"pointer"
+                }}
+            >
+                🌍 Live Location
+            </div>
+
+        </div>
+
+    )}
+
+</div>
+
+    
+
                 <input
                     value={text}
                     disabled={isBlocked && !selectedUser?.isGroup}
@@ -1194,7 +1690,90 @@ const handleReaction = (msg, emoji) => {
         />
     </div>
 
-)}       
+)}     
+    {showLiveLocationModal && (
+
+    <div
+        onClick={() => setShowLiveLocationModal(false)}
+        style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,.55)",
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            zIndex: 99999
+        }}
+    >
+
+        <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+                width: "350px",
+                background: "#202c33",
+                borderRadius: "14px",
+                color: "white",
+                overflow: "hidden"
+            }}
+        >
+
+            <div
+                style={{
+                    padding: "18px",
+                    fontSize: "18px",
+                    fontWeight: "600",
+                    borderBottom: "1px solid #333"
+                }}
+            >
+                Share Live Location
+            </div>
+
+            <div
+                onClick={() => {
+                    startLiveLocation(15);
+                    setShowLiveLocationModal(false);
+                }}
+                style={{
+                    padding: "16px 20px",
+                    cursor: "pointer",
+                    borderBottom: "1px solid #333"
+                }}
+            >
+                🌍 15 Minutes
+            </div>
+
+            <div
+                onClick={() => {
+                    startLiveLocation(60);
+                    setShowLiveLocationModal(false);
+                }}
+                style={{
+                    padding: "16px 20px",
+                    cursor: "pointer",
+                    borderBottom: "1px solid #333"
+                }}
+            >
+                🌍 1 Hour
+            </div>
+
+            <div
+                onClick={() => {
+                    startLiveLocation(480);
+                    setShowLiveLocationModal(false);
+                }}
+                style={{
+                    padding: "16px 20px",
+                    cursor: "pointer"
+                }}
+            >
+                🌍 8 Hours
+            </div>
+
+        </div>
+
+    </div>
+
+)}
         </>
     );
 }

@@ -37,6 +37,35 @@ const messageSchema=new mongoose.Schema({
         type:String,
         default:"text"
     },
+    latitude: {
+    type: Number,
+    default: null
+},
+
+longitude: {
+    type: Number,
+    default: null
+},
+
+locationName: {
+    type: String,
+    default: ""
+},
+
+isLive: {
+    type: Boolean,
+    default: false
+},
+
+liveLocationId: {
+    type: String,
+    default: ""
+},
+
+expiresAt: {
+    type: Date,
+    default: null
+},
     mediaUrl:{
         type:String,
         default:""

@@ -77,6 +77,14 @@ const serializeMessage = (messageDoc) => {
             replySender: String(messageDoc.replySender || ""),
         messageType: String(messageDoc.messageType || "text"),
         mediaUrl: String(messageDoc.mediaUrl || ""),
+
+        latitude: messageDoc.latitude,
+        longitude: messageDoc.longitude,
+        locationName: messageDoc.locationName || "",
+        isLive: messageDoc.isLive,
+        liveLocationId: messageDoc.liveLocationId || "",
+        expiresAt: messageDoc.expiresAt,
+
         createdAt: messageDoc.createdAt,
         clientMessageId: String(messageDoc.clientMessageId || ""),
             status: String(messageDoc.status || "offline"),
@@ -229,14 +237,21 @@ io.on("connection", (socket) => {
 
     })
 
-    socket.on("privateMessage", async ({ to, message = "", messageType = "text", mediaUrl = "", fileName = "", clientMessageId = "",replyTo=null,replyText="",replySender="" ,forwarded=false}) => {
+    socket.on("privateMessage", async ({ to, message = "", messageType = "text", mediaUrl = "", fileName = "", clientMessageId = "",replyTo=null,replyText="",replySender="" ,forwarded=false,latitude = null,longitude = null,locationName = "",
+    isLive = false,
+    liveLocationId = "",
+    expiresAt = null}) => {
 
-
+        console.log("PRIVATE LOCATION:", {
+    messageType,
+    latitude,
+    longitude
+});
         console.log("Forwarded received:", forwarded);
         const from = users[socket.id];
         const targetEmail = normalizeEmail(to);
         const senderEmail = normalizeEmail(from?.email);
-        const allowedMsgTypes = ["text", "image", "video", "document","voice"];
+        const allowedMsgTypes = ["text", "image", "video", "document","voice","location"];
         const safeMessageType = allowedMsgTypes.includes(messageType) ? messageType : "text";
         const text = String(message || "").trim();
         const media = String(mediaUrl || "");
@@ -330,6 +345,12 @@ io.on("connection", (socket) => {
                 messageType: safeMessageType,
                 mediaUrl: media,
                 fileName,
+                latitude,
+                longitude,
+                locationName,
+                isLive,
+                liveLocationId,
+                expiresAt,
                 clientMessageId: String(clientMessageId || ""),
                 status: deliveryStatus,
 
@@ -356,7 +377,14 @@ io.on("connection", (socket) => {
                 clientMessageId: savedDoc.clientMessageId,
                 status: savedDoc.status,
                 starred: savedDoc.starred,
-                forwarded: savedDoc.forwarded
+                forwarded: savedDoc.forwarded,
+
+                latitude: savedDoc.latitude,
+                longitude: savedDoc.longitude,
+                locationName: savedDoc.locationName,
+                isLive: savedDoc.isLive,
+                liveLocationId: savedDoc.liveLocationId,
+                expiresAt: savedDoc.expiresAt,
             };
 
             const senderSockets = Object.keys(users).filter(
@@ -552,14 +580,26 @@ io.on("connection", (socket) => {
             console.log("Delete error:", err);
         }
     });
-    socket.on("groupMessage",async({groupId,message,messageType="text",mediaUrl="",fileName="",forwarded=false})=>{
+    socket.on("groupMessage",async({groupId,message,messageType="text",mediaUrl="",fileName="",forwarded=false,replyTo = null,replyText = "",replySender = "",
+    latitude = null,
+    longitude = null,
+    locationName = "",
+    isLive = false,
+    liveLocationId = "",
+    expiresAt = null})=>{
+
+        console.log("GROUP LOCATION:", {
+    messageType,
+    latitude,
+    longitude
+});
         try{
             const group=await Group.findById(groupId);
 
             if(!group) return;
 
             const sender=socket.user.email;
-            const allowedTypes = ["text", "image", "video", "document","voice"];
+            const allowedTypes = ["text", "image", "video", "document","voice","location"];
 
             const safeMessageType = allowedTypes.includes(messageType)
             ? messageType
@@ -590,7 +630,17 @@ io.on("connection", (socket) => {
                 messageType:safeMessageType,
                 mediaUrl,
                 fileName,
-                forwarded
+                forwarded,
+                replyTo,
+                replyText,
+                replySender,
+
+                latitude,
+                longitude,
+                locationName,
+                isLive,
+                liveLocationId,
+                expiresAt,
             });
 
             const payload={
@@ -611,6 +661,297 @@ io.on("connection", (socket) => {
             console.log(err);
         }
     })
+    socket.on("liveLocationUpdated", (data) => {
+
+    setMessages(prev =>
+
+        prev.map(msg =>
+
+            msg.liveLocationId === data.liveLocationId
+
+                ? {
+
+                    ...msg,
+
+                    latitude: data.latitude,
+
+                    longitude: data.longitude,
+
+                    expiresAt: data.expiresAt,
+
+                    isLive: true
+
+                }
+
+                : msg
+
+        )
+
+    );
+
+});
+   socket.on("privateLiveLocation", async ({
+    to,
+    latitude,
+    longitude,
+    liveLocationId,
+    expiresAt
+}) => {
+
+    try {
+
+       const sender = socket.user.email;
+       const receiverSockets = Object.keys(users).filter(
+            id => users[id]?.email === to
+        );
+
+let liveMessage = await Message.findOne({
+
+    liveLocationId,
+
+    from: sender,
+
+    to
+
+});
+
+if (!liveMessage) {
+
+    liveMessage = await Message.create({
+
+        from: sender,
+
+        to,
+
+        message: "",
+
+        messageType: "location",
+
+        latitude,
+
+        longitude,
+
+        isLive: true,
+
+        liveLocationId,
+
+        expiresAt
+
+    });
+    receiverSockets.forEach(id => {
+
+    io.to(id).emit("liveLocationStarted", {
+
+        from: sender
+
+    });
+
+});
+
+}else {
+
+    liveMessage.latitude = latitude;
+
+    liveMessage.longitude = longitude;
+
+    await liveMessage.save();
+
+}
+
+        
+
+  const payload = {
+
+    _id: liveMessage._id,
+
+    from: sender,
+
+    to,
+
+    messageType: "location",
+
+    latitude,
+
+    longitude,
+
+    isLive: true,
+
+    liveLocationId,
+
+    expiresAt
+
+};
+
+        receiverSockets.forEach(id => {
+            io.to(id).emit("liveLocationUpdated", payload);
+        });
+
+        // Send to sender's other tabs too
+        const senderSockets = Object.keys(users).filter(
+            id => users[id]?.email === sender
+        );
+
+        senderSockets.forEach(id => {
+            io.to(id).emit("liveLocationUpdated", {
+                ...payload,
+                fromSelf: true
+            });
+        });
+
+    } catch (err) {
+
+        console.error(err);
+
+    }
+
+});
+    socket.on("groupLiveLocation", async ({
+    groupId,
+    latitude,
+    longitude,
+    liveLocationId,
+    expiresAt
+}) => {
+
+    try {
+
+        const group = await Group.findById(groupId);
+
+        if (!group) return;
+
+        const sender = socket.user.email;
+
+        const payload = {
+
+            groupId,
+
+            from: sender,
+
+            latitude,
+
+            longitude,
+
+            liveLocationId,
+
+            expiresAt
+
+        };
+
+        group.members.forEach(member => {
+
+            const sockets = Object.keys(users).filter(
+                id => users[id]?.email === member
+            );
+
+            sockets.forEach(id => {
+
+                io.to(id).emit(
+                    "liveLocationUpdated",
+                    payload
+                );
+
+            });
+
+        });
+
+    } catch (err) {
+
+        console.error(err);
+
+    }
+
+});
+socket.on("stopLiveLocation", async ({ liveLocationId }) => {
+
+    try {
+
+        const message = await Message.findOne({
+            liveLocationId
+        });
+
+        if (!message) return;
+
+        message.isLive = false;
+
+        await message.save();
+
+        const payload = {
+
+    liveLocationId,
+
+    isLive: false,
+
+    from: message.from
+
+};
+
+        // Group message
+        let group = null;
+
+        if (mongoose.Types.ObjectId.isValid(message.to)) {
+
+            group = await Group.findById(message.to);
+
+        }
+
+        if (group) {
+
+            group.members.forEach(member => {
+
+                const sockets = Object.keys(users).filter(
+                    id => users[id]?.email === member
+                );
+
+                sockets.forEach(id => {
+
+                    io.to(id).emit(
+                        "liveLocationStopped",
+                        payload
+                    );
+
+                });
+
+            });
+
+        } else {
+
+            // Private chat
+
+            const senderSockets = Object.keys(users).filter(
+                id => users[id]?.email === message.from
+            );
+
+            const receiverSockets = Object.keys(users).filter(
+                id => users[id]?.email === message.to
+            );
+
+            senderSockets.forEach(id => {
+
+                io.to(id).emit(
+                    "liveLocationStopped",
+                    payload
+                );
+
+            });
+
+            receiverSockets.forEach(id => {
+
+                io.to(id).emit(
+                    "liveLocationStopped",
+                    payload
+                );
+
+            });
+
+        }
+
+    } catch (err) {
+
+        console.error(err);
+
+    }
+
+});
     socket.on("deleteForMe", async ({ messageId }) => {
     try {
 
@@ -1012,6 +1353,15 @@ const messages = await Message.find({
 
         messageType: msg.messageType,
         mediaUrl: msg.mediaUrl,
+
+
+        latitude: msg.latitude,
+        longitude: msg.longitude,
+        locationName: msg.locationName,
+        isLive: msg.isLive,
+        liveLocationId: msg.liveLocationId,
+        expiresAt: msg.expiresAt,
+
         clientMessageId: msg.clientMessageId,
         status: msg.status,
         starred: msg.starred,
@@ -1441,7 +1791,14 @@ const messages = await Message.find({
         reactions: msg.reactions,
         deletedAt: msg.deletedAt,
 
-        createdAt: msg.createdAt
+        createdAt: msg.createdAt,
+        latitude: msg.latitude,
+        longitude: msg.longitude,
+        locationName: msg.locationName,
+        isLive: msg.isLive,
+        liveLocationId: msg.liveLocationId,
+        expiresAt: msg.expiresAt,
+
     }))
 );
     }

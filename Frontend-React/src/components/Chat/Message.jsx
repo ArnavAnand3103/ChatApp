@@ -1,6 +1,8 @@
 import {useState,useEffect,useRef} from 'react';
 import {createPortal} from 'react-dom';
 import VoiceMessage from "./VoiceMessage";
+import LocationMessage from "./LocationMessage";
+import LiveLocationMessage from "./LiveLocationMessage";
 
 import MediaModal from './MediaModal';
 import { starMessage } from "../../services/api";
@@ -8,7 +10,8 @@ import { useAuth } from "../../context/AuthContext";
 import ForwardModal from "../ForwardModal";
 
 
-export default function Message({msg,currentUser,status,onReply,onEdit, onDeleteForMe,onDeleteForEveryone, onReact, searchText,setMessages,onForwardMessage}){
+
+export default function Message({msg,currentUser,status,onReply,onEdit, onDeleteForMe,onDeleteForEveryone, onReact, searchText,setMessages,onForwardMessage, stopLiveLocation,}){
 
     const [openMedia,setOpenMedia]=useState(null);
     const [showForward,setShowForward]=useState(false);
@@ -36,7 +39,10 @@ useEffect(()=>{
 },[]);
 
     const isMe=msg.from===currentUser.email;
-    console.log("Message object:",msg);
+    if (msg.messageType === "location") {
+    console.log("LOCATION MESSAGE:", msg);
+}
+
     let statusIcon="";
 
  if (status === "sent" || status === "offline") statusIcon = "✔";       
@@ -50,7 +56,9 @@ useEffect(()=>{
         <>
             <div 
             id={`msg-${msg._id}`}
-            className={`message ${isMe ? 'me' : 'other'}`}
+className={`message ${isMe ? "me" : "other"} ${
+    msg.messageType === "location" ? "location-message" : ""
+}`}
        onContextMenu={(e)=>{
 
         if (msg.deletedForEveryone) {
@@ -129,14 +137,40 @@ useEffect(()=>{
             {msg.replySender}
         </div>
 
-        <div
-            style={{
-                color: "#ddd"
-            }}
-        >
-            {msg.replyText}
-        </div>
-    </div>
+<div
+    style={{
+        color: "#ddd",
+        display: "flex",
+        alignItems: "center",
+        gap: "6px"
+    }}
+>
+    {msg.replyText === "🎤 Voice message" ? (
+        <>
+            <span>🎤</span>
+            <span>Voice message</span>
+        </>
+    ) : msg.replyText === "🖼 Photo" ? (
+        <>
+            <span>🖼️</span>
+            <span>Photo</span>
+        </>
+    ) : msg.replyText === "🎥 Video" ? (
+        <>
+            <span>🎥</span>
+            <span>Video</span>
+        </>
+    ) : msg.replyText?.startsWith("📄") ? (
+        <>
+            <span>📄</span>
+            <span>{msg.replyText.replace("📄 ", "")}</span>
+        </>
+    ) : (
+        <span>{msg.replyText}</span>
+    )}
+</div>
+</div>
+
 )}
        {!msg.deletedForEveryone && msg.forwarded && (
     <div
@@ -223,10 +257,9 @@ useEffect(()=>{
 )}
 
 </div>
+{!msg.deletedForEveryone && (
 
-             {!msg.deletedForEveryone && msg.mediaUrl && (
-
-    msg.messageType === "image" ? (
+    msg.messageType === "image" && msg.mediaUrl ? (
 
         <img
             src={msg.mediaUrl}
@@ -246,7 +279,7 @@ useEffect(()=>{
             }
         />
 
-    ) : msg.messageType === "video" ? (
+    ) : msg.messageType === "video" && msg.mediaUrl ? (
 
         <video
             src={msg.mediaUrl}
@@ -261,16 +294,35 @@ useEffect(()=>{
             }}
         />
 
-    ): msg.messageType === "voice" ? (
+    ) : msg.messageType === "voice" && msg.mediaUrl ? (
 
-     <VoiceMessage
-        mediaUrl={msg.mediaUrl}
-        isMe={isMe}
-    />
+        <VoiceMessage
+            mediaUrl={msg.mediaUrl}
+            isMe={isMe}
+        />
 
+    ) : msg.messageType === "location" ? (
 
-)
-    : msg.messageType === "document" ? (
+    msg.isLive ? (
+
+        <LiveLocationMessage
+            msg={msg}
+            stopLiveLocation={stopLiveLocation}
+            canStop={
+                msg.from === currentUser?.email &&
+                msg.isLive
+            }
+        />
+
+    ) : (
+
+        <LocationMessage
+            msg={msg}
+        />
+
+    )
+
+) : msg.messageType === "document" && msg.mediaUrl ? (
 
         <a
             href={msg.mediaUrl}

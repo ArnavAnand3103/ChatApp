@@ -290,7 +290,7 @@ body[data-theme="light"] {
 }
 
 .message {
-    max-width: 65%;
+    max-width: 380px;
     padding: 12px 18px;
     border-radius: 18px;
     font-size: 14px;
@@ -299,6 +299,12 @@ body[data-theme="light"] {
     animation: slideIn 0.3s ease;
     overflow-wrap: anywhere;
     word-break: break-word;
+}
+.location-message {
+    background: transparent !important;
+    padding: 0 !important;
+    box-shadow: none;
+    max-width: 320px;
 }
 
 .message > div {

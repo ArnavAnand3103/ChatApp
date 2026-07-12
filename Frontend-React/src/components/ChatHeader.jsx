@@ -2,6 +2,7 @@ import {useEffect,useState} from 'react';
 import {useNavigate} from 'react-router-dom';
 
 import {useAuth} from '../context/AuthContext';
+import {useCall} from '../context/CallContext';
 
 export default function ChatHeader({
     selectedUser,
@@ -17,12 +18,37 @@ export default function ChatHeader({
     isBlocked,
     myPhoto,
     onShowGroupInfo,
-    onPhotoClick
+    onPhotoClick,
+
+    onAudioCall,
+    onVideoCall
 }){
     const {user}=useAuth();
     const navigate=useNavigate();
+    const { groupCallActiveStatusMap, setActiveGroupCall, setCallStatus } = useCall();
+
+    const handleStartGroupCall = (callType) => {
+        setActiveGroupCall({
+            groupId: selectedUser?._id,
+            groupName: selectedUser?.name,
+            callType
+        });
+        setCallStatus("connected");
+    };
+
+    const handleJoinGroupCall = () => {
+        const activeCall = groupCallActiveStatusMap?.[selectedUser?._id];
+        if (!activeCall) return;
+        setActiveGroupCall({
+            groupId: selectedUser?._id,
+            groupName: selectedUser?.name,
+            callType: "video"
+        });
+        setCallStatus("connected");
+    };
 
     const initials = String(selectedUser?.name||"?").slice(0,1).toUpperCase();
+
 
     return(
         <div className="chat-header">
@@ -102,10 +128,65 @@ export default function ChatHeader({
 
             <div className="header-actions">
                 {selectedUser?.isGroup&&(
-                    <button onClick={onShowGroupInfo}>
-                          ℹ️ Group Info
-                    </button>
+                    <>
+                        <button onClick={onShowGroupInfo}>
+                              ℹ️ Group Info
+                        </button>
+                        {groupCallActiveStatusMap?.[selectedUser?._id]?.isActive ? (
+                            <button
+                                onClick={handleJoinGroupCall}
+                                style={{
+                                    background: "#10b981",
+                                    color: "white",
+                                    padding: "6px 12px",
+                                    borderRadius: "20px",
+                                    fontWeight: "600",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: "6px",
+                                    border: "none",
+                                    cursor: "pointer"
+                                }}
+                            >
+                                📞 Join Call ({groupCallActiveStatusMap[selectedUser._id].participantCount})
+                            </button>
+                        ) : (
+                            <>
+                                <button
+                                    onClick={() => handleStartGroupCall("audio")}
+                                    title="Start Group Audio Call"
+                                >
+                                    📞
+                                </button>
+                                <button
+                                    onClick={() => handleStartGroupCall("video")}
+                                    title="Start Group Video Call"
+                                >
+                                    📹
+                                </button>
+                            </>
+                        )}
+                    </>
                 )}
+                {!selectedUser?.isGroup && (
+
+    <>
+        <button
+            onClick={onAudioCall}
+            title="Audio Call"
+        >
+            📞
+        </button>
+
+        <button
+            onClick={onVideoCall}
+            title="Video Call"
+        >
+            📹
+        </button>
+    </>
+
+)}
                 <button onClick={onToggleTheme}>Theme</button>
                 <button onClick={onPhoto}>Photo</button>
                                 <button onClick={onToggleSearch}>Search</button>

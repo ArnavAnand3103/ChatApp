@@ -11,10 +11,7 @@ useEffect(()=>{
             onClose();
         }
     };
-    window.addEventListener("keydown",handler);
-    return()=>{
-        window.removeEventListener("keydown",handler);
-    }
+   
 },[onClose]);
     if(!photo) return null;
 

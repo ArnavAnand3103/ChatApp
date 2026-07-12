@@ -5,6 +5,7 @@ import { useAuth } from '../../context/AuthContext';
 import { showNotification } from '../../utils/notification';
 import {useRef} from 'react';
 import { getCurrentLocation } from "../../utils/location";
+import IncomingCall from "../Call/IncomingCall";
 
 export default function Chat({
     selectedUser,
@@ -54,6 +55,7 @@ export default function Chat({
     const liveLocationWatchRef = useRef(null);
     const liveLocationIdRef = useRef(null);
     const liveLocationTimerRef = useRef(null);
+   
 
     const bottomRef=useRef(null);
     const messageRefs=useRef([]);
@@ -677,6 +679,7 @@ const stopLiveLocation = () => {
     });
 
 };
+
 const sendMessage = async () => {
 
     if (editingMessage) {
@@ -1514,6 +1517,25 @@ const handleReaction = (msg, emoji) => {
         )}
 
             <div className="input-bar">
+                 <button
+        className="send-btn"
+        onClick={() =>
+            document.getElementById("mediaInput").click()
+        }
+        style={{
+        width: "30px",
+        height: "30px",
+        background: "red",
+        color: "white",
+        fontSize: "24px",
+        border: "2px solid white",
+        borderRadius: "50%",
+        marginRight: "10px"
+    }}
+        title="Attachment"
+    >
+        ➕
+    </button>
       <div style={{ position: "relative" }}>
 
     <button
@@ -1774,6 +1796,7 @@ const handleReaction = (msg, emoji) => {
     </div>
 
 )}
+     
         </>
     );
 }

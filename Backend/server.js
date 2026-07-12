@@ -16,6 +16,8 @@ import ArchivedChat from "./models/ArchivedChat.js";
 import Group from "./models/Group.js";
 import DeletedMessage from "./models/DeletedMessage.js";
 
+import registerCallSocket from "./sockets/callSocket.js";
+
 // Load environment variables from .env file
 import dotenv from 'dotenv';
 dotenv.config();
@@ -64,6 +66,7 @@ const sanitizeUser = (userDoc) => {
         lastSeen: userDoc.lastSeen || null
     };
 };
+import CallHistory from "./models/CallHistory.js";
 
 const serializeMessage = (messageDoc) => {
     if (!messageDoc) return null;
@@ -1239,7 +1242,12 @@ if (group) {
         }catch(err){
             console.error("Edit message error:",err);
         }
-    })
+    });
+    registerCallSocket(
+    io,
+    socket,
+    users
+);
 }
 );
 app.get("/search", requireAuth, async (req, res) => {

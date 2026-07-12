@@ -30,12 +30,7 @@ useEffect(()=>{
     const closeMenu=()=>{
         setShowMenu(false);
     };
-    window.addEventListener("click",closeMenu);
-    window.addEventListener("closeAllMenus",closeMenu);
-    return ()=>{
-        window.removeEventListener("click",closeMenu);
-        window.removeEventListener("closeAllMenus",closeMenu);
-    };
+   
 },[]);
 
     const isMe=msg.from===currentUser.email;

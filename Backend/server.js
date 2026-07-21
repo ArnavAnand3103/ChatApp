@@ -21,13 +21,13 @@ import registerCallSocket from "./sockets/callSocket.js";
 import aiRoutes from "./ai/routes/aiRoutes.js";
 
 
-// Load environment variables from .env file
-import dotenv from 'dotenv';
-dotenv.config();
-
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Load environment variables from .env file
+import dotenv from 'dotenv';
+dotenv.config({ path: path.join(__dirname, '.env') });
+dotenv.config();
 
 import Message from './models/Message.js';
 import BlockedUser from './models/BlockedUser.js';

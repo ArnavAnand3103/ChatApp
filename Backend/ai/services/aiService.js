@@ -1,4 +1,6 @@
 import Groq from "groq-sdk";
+import dotenv from "dotenv";
+dotenv.config();
 import { codingSystemPrompt, summarizationPrompt, ragSystemPrompt, semanticSearchPrompt, taskExtractionPrompt, multiAgentPlannerPrompt, multiAgentExecutorPrompt } from "../prompts/systemPrompt.js";
 
 export const askAI = async (messages) => {

@@ -56,7 +56,7 @@ const archivedGroups = groups.filter(group =>
                 console.error("fetchUsers returned:",data);
                 return;
             }
-            setUsers(data);
+         
 
             // Initialize from API
             const counts = {};
@@ -67,6 +67,8 @@ const archivedGroups = groups.filter(group =>
             });
             setUnreadCounts(prev => ({...prev, ...counts}));
             setLastMessages(prev => ({...prev, ...lasts}));
+
+            setUsers(data); 
 
             if(!search&&data.length>0){
                 const filtered=data.filter((u)=>u.email!==user.email);
@@ -406,7 +408,11 @@ toast && (
     )}
 
 </div>
-                                <div className={`status-dot ${isOnline ? 'online' : ''}`}></div>
+                            {
+    u.email !== "ai@chatapp.com" && (
+        <div className={`status-dot ${isOnline ? "online" : ""}`}></div>
+    )
+}
                             </div>
 
                             <div className="friend-info">

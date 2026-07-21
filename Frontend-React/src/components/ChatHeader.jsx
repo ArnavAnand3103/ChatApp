@@ -108,9 +108,21 @@ export default function ChatHeader({
 </div>
                 <div className="header-info">
                     <div className="header-name">{selectedUser?.name||"Select User"}</div>
-                    <div id="headerStatus" style={{fontSize: "13px", color: "var(--text-muted)", marginTop: "4px", fontWeight: 500}}>
-                        {statusText}
-                    </div>
+                    <div
+    id="headerStatus"
+    style={{
+        fontSize: "13px",
+        color: "var(--text-muted)",
+        marginTop: "4px",
+        fontWeight: 500
+    }}
+>
+{
+    selectedUser?.email === "ai@chatapp.com"
+        ? "Powered by Groq"
+        : statusText
+}
+</div>
                     {isTyping && (
                         <div className="typing-indicator active">
                             <div className="dot-container">
@@ -168,23 +180,25 @@ export default function ChatHeader({
                         )}
                     </>
                 )}
-                {!selectedUser?.isGroup && (
+{
+!selectedUser?.isGroup &&
+selectedUser?.email !== "ai@chatapp.com" && (
 
-    <>
-        <button
-            onClick={onAudioCall}
-            title="Audio Call"
-        >
-            📞
-        </button>
+<>
+    <button
+        onClick={onAudioCall}
+        title="Audio Call"
+    >
+        📞
+    </button>
 
-        <button
-            onClick={onVideoCall}
-            title="Video Call"
-        >
-            📹
-        </button>
-    </>
+    <button
+        onClick={onVideoCall}
+        title="Video Call"
+    >
+        📹
+    </button>
+</>
 
 )}
                 <button onClick={onToggleTheme}>Theme</button>
@@ -194,11 +208,17 @@ export default function ChatHeader({
                  ⭐ Starred
                </button>
                 <button onClick={onAnalytics}>Analytics</button>
-                <button id="blockBtn" 
-                        onClick={onToggleBlock}
-                        style={{ color: isBlocked ? "var(--accent-red)" : "var(--text-muted)" }}>
-                    {isBlocked?"Unblock":"Block"}
-                </button>
+             {
+selectedUser?.email !== "ai@chatapp.com" && (
+
+<button
+    id="blockBtn"
+    onClick={onToggleBlock}
+>
+    {isBlocked ? "Unblock" : "Block"}
+</button>
+
+)}
                 <button className="delete-btn" onClick={onDeleteHistory}>Delete History</button>
                 <button onClick={onLogout}>Logout</button>
             </div>

@@ -262,3 +262,153 @@ export const fetchStarredMessages=async(token)=>{
     );
     return await res.json();
 }
+
+export const chatWithAI = async (message) => {
+
+    const token = sessionStorage.getItem("token");
+
+    const res = await fetch("http://localhost:5001/api/ai/chat", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ message})
+    });
+
+    return await res.json();
+};
+
+export const generateImage = async (prompt) => {
+
+    const token = sessionStorage.getItem("token");
+
+    const res = await fetch(
+        "http://localhost:5001/api/ai/image",
+        {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`
+            },
+            body: JSON.stringify({ prompt })
+        }
+    );
+
+    const data = await res.json();
+
+    console.log("Status:", res.status);
+    console.log("Response:", data);
+
+    if (!res.ok) {
+        throw new Error(data.message);
+    }
+
+    return data;
+};
+
+// AI Coding Assistant — explain code, fix bugs, write code
+export const codeAssist = async (message) => {
+
+    const token = sessionStorage.getItem("token");
+
+    const res = await fetch(
+        "http://localhost:5001/api/ai/code",
+        {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`
+            },
+            body: JSON.stringify({ message })
+        }
+    );
+
+    const data = await res.json();
+
+    if (!res.ok) {
+        throw new Error(data.message || "Code assistant error");
+    }
+
+    return data;
+};
+
+// ── Chat Summarization ────────────────────────────────────────────
+export const summarizeChatAPI = async (token, withEmail) => {
+    const res = await fetch("http://localhost:5001/api/ai/summarize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ withEmail })
+    });
+    return res.json();
+};
+
+// ── Chat RAG ──────────────────────────────────────────────────────
+export const chatRAGAPI = async (token, withEmail, question) => {
+    const res = await fetch("http://localhost:5001/api/ai/rag", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ withEmail, question })
+    });
+    return res.json();
+};
+
+// ── Document RAG ──────────────────────────────────────────────────
+export const documentRAGAPI = async (token, docText, question) => {
+    const res = await fetch("http://localhost:5001/api/ai/doc-rag", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ docText, question })
+    });
+    return res.json();
+};
+
+// ── Semantic Search ───────────────────────────────────────────────
+export const semanticSearchAPI = async (token, withEmail, query) => {
+    const res = await fetch("http://localhost:5001/api/ai/semantic-search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ withEmail, query })
+    });
+    return res.json();
+};
+
+// ── AI Sticker Generation ─────────────────────────────────────────
+export const generateStickerAPI = async (token, prompt, toChat) => {
+    const res = await fetch("http://localhost:5001/api/ai/sticker", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ prompt, toChat })
+    });
+    return res.json();
+};
+
+// ── AI Image Editing ──────────────────────────────────────────────
+export const editImageAPI = async (token, originalPrompt, editInstruction, toChat) => {
+    const res = await fetch("http://localhost:5001/api/ai/edit-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ originalPrompt, editInstruction, toChat })
+    });
+    return res.json();
+};
+
+// ── Task Extraction ───────────────────────────────────────────────
+export const extractTasksAPI = async (token, withEmail) => {
+    const res = await fetch("http://localhost:5001/api/ai/extract-tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ withEmail })
+    });
+    return res.json();
+};
+
+// ── Multi-Agent AI ────────────────────────────────────────────────
+export const multiAgentAPI = async (token, goal) => {
+    const res = await fetch("http://localhost:5001/api/ai/multi-agent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ goal })
+    });
+    return res.json();
+};

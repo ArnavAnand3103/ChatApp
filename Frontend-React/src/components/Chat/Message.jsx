@@ -10,6 +10,59 @@ import { useAuth } from "../../context/AuthContext";
 import ForwardModal from "../ForwardModal";
 
 
+// ──────────────────────────────────────────────────────────────────────────────
+// Utility: parse markdown ``` code fences into segments for rendering
+// ──────────────────────────────────────────────────────────────────────────────
+function parseCodeBlocks(text) {
+    const segments = [];
+    const regex = /```([\w]*)\n?([\s\S]*?)```/g;
+    let lastIndex = 0;
+    let match;
+    while ((match = regex.exec(text)) !== null) {
+        if (match.index > lastIndex) {
+            segments.push({ type: "prose", content: text.slice(lastIndex, match.index) });
+        }
+        segments.push({ type: "code", lang: match[1] || "code", content: match[2] });
+        lastIndex = regex.lastIndex;
+    }
+    if (lastIndex < text.length) {
+        segments.push({ type: "prose", content: text.slice(lastIndex) });
+    }
+    return segments;
+}
+
+function CopyButton({ text }) {
+    const [copied, setCopied] = useState(false);
+    const handleCopy = () => {
+        navigator.clipboard.writeText(text).then(() => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+        });
+    };
+    return (
+        <button
+            onClick={handleCopy}
+            title="Copy code"
+            style={{
+                position: "absolute",
+                top: "8px",
+                right: "8px",
+                background: copied ? "#25D366" : "#374151",
+                color: "white",
+                border: "none",
+                borderRadius: "6px",
+                padding: "3px 10px",
+                cursor: "pointer",
+                fontSize: "11px",
+                fontWeight: "600",
+                transition: "background 0.2s"
+            }}
+        >
+            {copied ? "✓ Copied" : "Copy"}
+        </button>
+    );
+}
+
 
 export default function Message({msg,currentUser,status,onReply,onEdit, onDeleteForMe,onDeleteForEveryone, onReact, searchText,setMessages,onForwardMessage, stopLiveLocation,}){
 
@@ -222,7 +275,7 @@ className={`message ${isMe ? "me" : "other"} ${
 
 ) : (
 
-    msg.messageType === "text" && (
+    (msg.messageType === "text" && !(msg.from === "ai@chatapp.com" && msg.message?.includes("```"))) && (
 
         <span
             style={{
@@ -251,6 +304,64 @@ className={`message ${isMe ? "me" : "other"} ${
 
 )}
 
+{/* ── AI Coding Assistant reply — rendered with code blocks ── */}
+{!msg.deletedForEveryone && (msg.messageType === "code" || (msg.from === "ai@chatapp.com" && msg.message?.includes("```"))) && msg.message && (
+    <div style={{ maxWidth: "480px", width: "100%" }}>
+        {parseCodeBlocks(msg.message).map((seg, i) =>
+            seg.type === "code" ? (
+                <div key={i} style={{ position: "relative", margin: "10px 0" }}>
+                    <div style={{
+                        background: "#0d1117",
+                        borderRadius: "10px",
+                        overflow: "hidden",
+                        border: "1px solid #30363d"
+                    }}>
+                        <div style={{
+                            background: "#161b22",
+                            padding: "6px 14px",
+                            fontSize: "11px",
+                            color: "#8b949e",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "6px",
+                            fontFamily: "monospace",
+                            borderBottom: "1px solid #30363d"
+                        }}>
+                            <span style={{ color: "#58a6ff" }}>●</span>
+                            {seg.lang || "code"}
+                        </div>
+                        <pre style={{
+                            margin: 0,
+                            padding: "14px 16px",
+                            overflowX: "auto",
+                            fontFamily: "'Fira Code', 'Consolas', monospace",
+                            fontSize: "13px",
+                            lineHeight: "1.7",
+                            color: "#e6edf3",
+                            whiteSpace: "pre-wrap",
+                            wordBreak: "break-word"
+                        }}>
+                            <code>{seg.content}</code>
+                        </pre>
+                    </div>
+                    <CopyButton text={seg.content} />
+                </div>
+            ) : (
+                <p key={i} style={{
+                    margin: "6px 0",
+                    lineHeight: "1.6",
+                    fontSize: "14px",
+                    color: "inherit",
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word"
+                }}>
+                    {seg.content}
+                </p>
+            )
+        )}
+    </div>
+)}
+
 </div>
 {!msg.deletedForEveryone && (
 
@@ -266,6 +377,9 @@ className={`message ${isMe ? "me" : "other"} ${
                 display: "block",
                 marginTop: msg.message ? "8px" : "0"
             }}
+              onError={() => {
+        console.log( msg.mediaUrl);
+    }}
             onClick={() =>
                 setOpenMedia({
                     url: msg.mediaUrl,

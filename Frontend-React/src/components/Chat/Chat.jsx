@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react';
 import Message from './Message';
-import { fetchMessages ,fetchGroupMessages} from '../../services/api';
+import { fetchMessages ,fetchGroupMessages,chatWithAI, generateImage, codeAssist} from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 import { showNotification } from '../../utils/notification';
 import {useRef} from 'react';
 import { getCurrentLocation } from "../../utils/location";
 import IncomingCall from "../Call/IncomingCall";
+import AIPanelModal from './AIPanelModal';
+
+
 
 export default function Chat({
     selectedUser,
@@ -47,6 +50,10 @@ export default function Chat({
 
     const [voiceBlob, setVoiceBlob] = useState(null);
     const [voicePreview, setVoicePreview] = useState("");
+
+    const [aiTyping, setAiTyping] = useState(false);
+    const [showAIModal, setShowAIModal] = useState(false);
+
 
     const mediaRecorderRef = useRef(null);
     const audioChunksRef = useRef([]);
@@ -141,7 +148,11 @@ export default function Chat({
 
         const loadMessages = async () => {
             //Group selected
+
+              
             if(selectedUser?.isGroup){
+
+              
                 const data=await fetchGroupMessages(
                     token,
                     selectedUser._id
@@ -682,6 +693,9 @@ const stopLiveLocation = () => {
 
 const sendMessage = async () => {
 
+    console.log("Selected User:", selectedUser);
+    console.log("isAI:", selectedUser?.isAI);
+
     if (editingMessage) {
 
         socket.emit("editMessage", {
@@ -694,6 +708,141 @@ const sendMessage = async () => {
 
         return;
     }
+
+    // ---------------- AI CHAT ----------------
+
+if (selectedUser?.email === "ai@chatapp.com") {
+        console.log("✅ AI block entered");
+
+    if (!text.trim()) return;
+
+    // Show user's message immediately
+    setMessages(prev => [
+        ...prev,
+        {
+            from: user.email,
+            to: selectedUser.email,
+            message: text,
+            createdAt: new Date(),
+            messageType: "text"
+        }
+    ]);
+const userMessage = text;
+setText("");
+
+const lowerPrompt = userMessage.toLowerCase();
+
+const imageKeywords = [
+    "generate",
+    "draw",
+    "paint",
+    "image",
+    "picture",
+    "photo",
+    "logo",
+    "poster",
+    "wallpaper"
+];
+
+const isImageRequest = imageKeywords.some(keyword =>
+    lowerPrompt.includes(keyword)
+);
+
+setAiTyping(true);
+try {
+
+    if (isImageRequest) {
+         const token = sessionStorage.getItem("token");
+    if (!token) {
+        alert("Session expired. Please log in again to generate images.");
+        return;
+    }
+
+        const res = await generateImage(userMessage);
+        console.log(res);
+        console.log(res.imageUrl);
+
+        setAiTyping(false);
+
+        setMessages(prev => [
+            ...prev,
+            {
+                from: selectedUser.email,
+                to: user.email,
+                mediaUrl: res.imageUrl,
+                message:"",
+                createdAt: new Date(),
+                messageType: "image"
+            }
+        ]);
+
+        return;
+    }
+
+    // ── Coding Assistant ────────────────────────────────────────────
+    const codingKeywords = [
+        "explain", "fix", "debug", "bug", "error", "code",
+        "function", "class", "syntax", "why is", "what does",
+        "how to", "write a", "create a", "implement", "refactor",
+        "optimize", "review", "javascript", "python", "java",
+        "c++", "typescript", "html", "css", "sql", "api", "async"
+    ];
+    const isCodeRequest = codingKeywords.some(kw => lowerPrompt.includes(kw));
+
+    if (isCodeRequest) {
+
+        const res = await codeAssist(userMessage);
+
+        await new Promise(resolve => setTimeout(resolve, 800));
+
+        setAiTyping(false);
+
+        setMessages(prev => [
+            ...prev,
+            {
+                from: selectedUser.email,
+                to: user.email,
+                message: res.reply,
+                createdAt: new Date(),
+                messageType: "code"
+            }
+        ]);
+
+        return;
+    }
+
+    const res = await chatWithAI(userMessage);
+
+    // Small delay so it feels natural
+    await new Promise(resolve => setTimeout(resolve, 1500));
+
+    setAiTyping(false);
+
+    setMessages(prev => [
+        ...prev,
+        {
+            from: selectedUser.email,
+            to: user.email,
+            message: res.reply,
+            createdAt: new Date(),
+            messageType: "text"
+        }
+    ]);
+
+} catch (err) {
+    setAiTyping(false);
+
+    console.error("Frontend Error:", err);
+
+    if (err.response) {
+        console.log(err.response);
+    }
+
+    alert(err.message);
+}
+
+    return;
+}
 
  if (selectedUser?.isGroup) {
 
@@ -1191,7 +1340,55 @@ const handleReaction = (msg, emoji) => {
 
 };
 
+    const handleSendAIImageMessage = (mediaUrl, prompt) => {
+        if (!selectedUser || !socket) return;
+        const clientMessageId = Date.now().toString();
 
+        if (selectedUser.isGroup) {
+            socket.emit("groupMessage", {
+                groupId: selectedUser._id,
+                message: prompt,
+                messageType: "image",
+                mediaUrl,
+                replyTo: null,
+                replyText: "",
+                replySender: ""
+            });
+            setMessages(prev => [
+                ...prev,
+                {
+                    from: user.email,
+                    to: selectedUser._id,
+                    message: prompt,
+                    messageType: "image",
+                    mediaUrl,
+                    createdAt: new Date(),
+                    status: "sent"
+                }
+            ]);
+        } else {
+            const msg = {
+                to: selectedUser.email,
+                message: prompt,
+                messageType: "image",
+                mediaUrl,
+                fileName: "",
+                clientMessageId,
+                replyTo: null,
+                replyText: "",
+                replySender: ""
+            };
+            socket.emit("privateMessage", msg);
+            setMessages(prev => [
+                ...prev,
+                {
+                    ...msg,
+                    from: user.email,
+                    createdAt: new Date()
+                }
+            ]);
+        }
+    };
         
     return (
         <>
@@ -1199,9 +1396,25 @@ const handleReaction = (msg, emoji) => {
             style={{
               display: "flex",
              justifyContent: "flex-end",
-              padding: "10px"
+              padding: "10px",
+              gap: "8px"
              }}
 >
+             <button
+                onClick={() => setShowAIModal(true)}
+                style={{
+                    padding: "8px 14px",
+                    borderRadius: "8px",
+                    cursor: "pointer",
+                    background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
+                    color: "white",
+                    border: "none",
+                    fontWeight: "bold",
+                    boxShadow: "0 2px 8px rgba(99,102,241,0.3)",
+                }}
+             >
+                🤖 AI Tools
+             </button>
              <button
         onClick={() => setSearchOpen(!isSearchVisible)}
         style={{
@@ -1308,6 +1521,27 @@ const handleReaction = (msg, emoji) => {
                     </div>
                 
                 ))}
+                {aiTyping && (
+    <div
+        style={{
+            display: "flex",
+            justifyContent: "flex-start",
+            margin: "10px 0"
+        }}
+    >
+        <div
+            style={{
+                background: "#202c33",
+                color: "white",
+                padding: "10px 16px",
+                borderRadius: "18px",
+                maxWidth: "120px"
+            }}
+        >
+            🤖 Typing...
+        </div>
+    </div>
+)}
                 <div ref={bottomRef}></div>
             </div>
 
@@ -1797,6 +2031,14 @@ const handleReaction = (msg, emoji) => {
 
 )}
      
+            {showAIModal && (
+                <AIPanelModal
+                    selectedUser={selectedUser}
+                    onClose={() => setShowAIModal(false)}
+                    onSendImageMessage={handleSendAIImageMessage}
+                />
+            )}
+
         </>
     );
 }

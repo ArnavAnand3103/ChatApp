@@ -18,6 +18,9 @@ import DeletedMessage from "./models/DeletedMessage.js";
 
 import registerCallSocket from "./sockets/callSocket.js";
 
+import aiRoutes from "./ai/routes/aiRoutes.js";
+
+
 // Load environment variables from .env file
 import dotenv from 'dotenv';
 dotenv.config();
@@ -39,7 +42,11 @@ app.use(express.static(path.join(__dirname, '../Frontend')));
 app.use(express.static(path.join(__dirname, '../')));
 
 mongoose.connect("mongodb://127.0.0.1:27017/chatapp")
-    .then(() => console.log("DB connected"))
+     .then(async () => {
+        console.log("DB connected");
+
+        await createAIUser();
+    })
     .catch(err => console.log(err));
 
 const server = http.createServer(app);
@@ -132,6 +139,35 @@ const getOnlineEmails = () => {
             .map((user) => user?.email)
             .filter(Boolean)
     )];
+};
+const createAIUser = async () => {
+
+    try {
+
+        const existing = await User.findOne({
+            email: "ai@chatapp.com"
+        });
+
+        if (existing) return;
+
+        const hashedPassword = await bcrypt.hash("aiassistant123", 10);
+
+        await User.create({
+            name: "🤖 AI Assistant",
+            email: "ai@chatapp.com",
+            password: hashedPassword,
+            photo: "",
+            isOnline: false
+        });
+
+        console.log("✅ AI Assistant created");
+
+    } catch (err) {
+
+        console.error(err);
+
+    }
+
 };
 function logLoginAttempt(email,success,ip){
     console.log({
@@ -2097,6 +2133,11 @@ app.get("/me", requireAuth, async (req, res) => {
         res.status(500).json({ message: "Failed to load profile" });
     }
 })
+app.use("/api/ai", aiRoutes);
+app.use(
+    "/uploads",
+    express.static(path.join(__dirname, "uploads"))
+);
 
 server.listen(5001, () => {
     console.log("Server runnnig on 5001");

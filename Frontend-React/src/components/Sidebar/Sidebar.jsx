@@ -9,8 +9,14 @@ import {
     createGroup,
     archiveChat,
     unarchiveChat,
-    getArchivedChats
+    getArchivedChats,
+    fetchUserPublicKeyAPI
 } from "../../services/api";
+import {
+    generateAESGroupKey,
+    encryptGroupKeyForMembers,
+    getOrGenerateUserKeys
+} from "../../utils/crypto";
 
 
 export default function Sidebar({onSelectUser,selectedUser,onlineUsers = [],socket,userStatusMap = {}}){
@@ -1106,14 +1112,41 @@ onClick={async (e) => {
                                         alert("Please enter a group name");
                                         return;
                                     }
-                                    const res = await createGroup(token, { name: groupName, members: selectedMembers });
-                                    if (res.group) {
-                                        setGroups(prev => [...prev, res.group]);
-                                        setShowModal(false);
-                                        setGroupName("");
-                                        setSelectedMembers([]);
-                                    } else {
-                                        alert(res.message || "Failed to create group");
+                                    try {
+                                        const allMemberEmails = [...new Set([...selectedMembers, user.email])];
+                                        const memberPublicKeysMap = {};
+                                        for (const email of allMemberEmails) {
+                                            try {
+                                                const pkRes = await fetchUserPublicKeyAPI(token, email);
+                                                if (pkRes?.publicKey) {
+                                                    memberPublicKeysMap[email] = pkRes.publicKey;
+                                                }
+                                            } catch (e) {
+                                                console.error("Failed to fetch public key for", email, e);
+                                            }
+                                        }
+                                        if (!memberPublicKeysMap[user.email]) {
+                                            const userKeys = await getOrGenerateUserKeys(user.email);
+                                            if (userKeys?.publicKey) {
+                                                memberPublicKeysMap[user.email] = userKeys.publicKey;
+                                            }
+                                        }
+
+                                        const rawGroupKey = await generateAESGroupKey();
+                                        const groupKeys = await encryptGroupKeyForMembers(rawGroupKey, memberPublicKeysMap);
+
+                                        const res = await createGroup(token, { name: groupName, members: selectedMembers, groupKeys });
+                                        if (res.group) {
+                                            setGroups(prev => [...prev, res.group]);
+                                            setShowModal(false);
+                                            setGroupName("");
+                                            setSelectedMembers([]);
+                                        } else {
+                                            alert(res.message || "Failed to create group");
+                                        }
+                                    } catch (err) {
+                                        console.error("Error creating E2EE group:", err);
+                                        alert("Failed to create group: " + err.message);
                                     }
                                 }}
                                 style={{

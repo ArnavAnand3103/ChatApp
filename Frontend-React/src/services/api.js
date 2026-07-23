@@ -28,12 +28,25 @@ export const loginRequest=async(email,password)=>{
     return res.json();
 };
 
-export const signupRequest=async(name,email,password)=>{
-    const res=await fetch(`${API_BASE}/signup`,{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({name,email,password})
+export const signupRequest = async (
+    name,
+    email,
+    password,
+    publicKey
+) => {
+    const res = await fetch(`${API_BASE}/signup`, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            name,
+            email,
+            password,
+            publicKey
+        })
     });
+
     return res.json();
 };
 
@@ -411,4 +424,58 @@ export const multiAgentAPI = async (token, goal) => {
         body: JSON.stringify({ goal })
     });
     return res.json();
-};
+};
+
+// ── E2EE Public Key APIs ──────────────────────────────────────────
+export const updatePublicKeyAPI = async (token, publicKey) => {
+    const res = await fetch(`${API_BASE}/user/public-key`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ publicKey })
+    });
+    return res.json();
+};
+
+export const fetchUserPublicKeyAPI = async (token, email) => {
+    const res = await fetch(`${API_BASE}/user/${encodeURIComponent(email)}/public-key`, {
+        headers: authHeaders(token, false)
+    });
+    return res.json();
+};
+
+export const rotateGroupKeysAPI = async (token, groupId, groupKeys) => {
+    const res = await fetch(`${API_BASE}/group/${groupId}/rotate-keys`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ groupKeys })
+    });
+    return res.json();
+};
+
+// ── Cloud Backup API helpers ─────────────────────────────────────────────────
+
+export const createCloudBackupAPI = async (token, payload) => {
+    const res = await fetch(`${API_BASE}/backup`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify(payload)
+    });
+    return res.json();
+};
+
+export const fetchCloudBackupAPI = async (token) => {
+    const res = await fetch(`${API_BASE}/backup`, {
+        headers: authHeaders(token, false)
+    });
+    return res.json();
+};
+
+export const deleteCloudBackupAPI = async (token) => {
+    const res = await fetch(`${API_BASE}/backup`, {
+        method: "DELETE",
+        headers: authHeaders(token, false)
+    });
+    return res.json();
+};
+
+

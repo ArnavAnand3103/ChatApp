@@ -1,7 +1,8 @@
 import {useState} from 'react';
 import {useNavigate} from 'react-router-dom';
 import {useAuth} from '../context/AuthContext';
-import {forgotPasswordRequest,loginRequest,resetPasswordRequest} from '../services/api';
+import {forgotPasswordRequest,loginRequest,resetPasswordRequest,updatePublicKeyAPI} from '../services/api';
+import {getOrGenerateUserKeys} from '../utils/crypto';
 
 export default function Login(){
     const navigate=useNavigate();
@@ -41,6 +42,17 @@ export default function Login(){
             sessionStorage.setItem('user',JSON.stringify(data.user));
             localStorage.removeItem("user");
             localStorage.removeItem("token");
+
+            // Ensure E2EE keys exist and public key is uploaded to server
+            try {
+                const userKeys = await getOrGenerateUserKeys(data.user.email);
+                if (userKeys?.publicKey && data.token) {
+                    await updatePublicKeyAPI(data.token, userKeys.publicKey);
+                }
+            } catch (keyErr) {
+                console.error("E2EE key initialization error:", keyErr);
+            }
+
             navigate("/chat");
         } catch(err){
             alert("Server error");

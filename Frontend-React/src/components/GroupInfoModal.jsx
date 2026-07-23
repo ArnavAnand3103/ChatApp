@@ -1,8 +1,7 @@
 import {useEffect,useState,useRef} from "react";
-import {fetchGroupInfo,leaveGroup,addMemberToGroup,removeMemberFromGroup,uploadGroupPhoto} from "../services/api";
+import {fetchGroupInfo,leaveGroup,addMemberToGroup,removeMemberFromGroup,uploadGroupPhoto,fetchUserPublicKeyAPI,rotateGroupKeysAPI} from "../services/api";
+import {generateAESGroupKey,encryptGroupKeyForMembers,getOrGenerateUserKeys} from "../utils/crypto";
 import {useAuth} from "../context/AuthContext";
-
-
 
 export default function GroupInfoModal({
     groupId,
@@ -22,7 +21,41 @@ export default function GroupInfoModal({
             setGroup(data);
         });
     },[groupId,token]);
+
+    const rotateKeysForMembers = async (memberEmails) => {
+        try {
+            const memberPublicKeysMap = {};
+            for (const email of memberEmails) {
+                try {
+                    const pkRes = await fetchUserPublicKeyAPI(token, email);
+                    if (pkRes?.publicKey) {
+                        memberPublicKeysMap[email] = pkRes.publicKey;
+                    }
+                } catch (e) {
+                    console.error("Failed to fetch public key for", email, e);
+                }
+            }
+            if (memberEmails.includes(user.email) && !memberPublicKeysMap[user.email]) {
+                const userKeys = await getOrGenerateUserKeys(user.email);
+                if (userKeys?.publicKey) {
+                    memberPublicKeysMap[user.email] = userKeys.publicKey;
+                }
+            }
+            const rawGroupKey = await generateAESGroupKey();
+            const groupKeys = await encryptGroupKeyForMembers(rawGroupKey, memberPublicKeysMap);
+            await rotateGroupKeysAPI(token, groupId, groupKeys);
+        } catch (err) {
+            console.error("Failed to rotate group key:", err);
+        }
+    };
+
     const handleLeaveGroup=async()=>{
+        if(!group) return;
+        const currentMemberEmails = (group.members || []).map(m => typeof m === "object" ? m.email : m);
+        const remainingMembers = currentMemberEmails.filter(m => m !== user.email);
+        if (remainingMembers.length > 0) {
+            await rotateKeysForMembers(remainingMembers);
+        }
         const data=await leaveGroup(token,groupId);
         alert(data.message);
         if(data.message==="Left group successfully"){
@@ -30,7 +63,7 @@ export default function GroupInfoModal({
         }
     }
     const handleAddMember=async()=>{
-        if(!newMember.trim()) return;
+        if(!newMember.trim() || !group) return;
         const data=await addMemberToGroup(
             token,
             groupId,
@@ -39,6 +72,9 @@ export default function GroupInfoModal({
         alert(data.message);
         if(data.group){
             setGroup(data.group);
+            const currentMemberEmails = (data.group.members || []).map(m => typeof m === "object" ? m.email : m);
+            const allMembers = [...new Set([...currentMemberEmails, newMember])];
+            await rotateKeysForMembers(allMembers);
             setNewMember("");
         }
     }
@@ -53,6 +89,9 @@ export default function GroupInfoModal({
         alert(data.message);
         if(data.group){
             setGroup(data.group);
+            const currentMemberEmails = (data.group.members || []).map(m => typeof m === "object" ? m.email : m);
+            const remainingMembers = currentMemberEmails.filter(m => m !== email);
+            await rotateKeysForMembers(remainingMembers);
         }
     }
     const handleUploadPhoto = (event) => {

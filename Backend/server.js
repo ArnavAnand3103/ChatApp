@@ -12,6 +12,7 @@ import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import rateLimit from "express-rate-limit";
 import ArchivedChat from "./models/ArchivedChat.js";
+import Backup from "./models/Backup.js";
 
 import Group from "./models/Group.js";
 import DeletedMessage from "./models/DeletedMessage.js";
@@ -70,7 +71,8 @@ const sanitizeUser = (userDoc) => {
         email: userDoc.email,
         photo: userDoc.photo || "",
         isOnline: !!userDoc.isOnline,
-        lastSeen: userDoc.lastSeen || null
+        lastSeen: userDoc.lastSeen || null,
+        publicKey: userDoc.publicKey || ""
     };
 };
 import CallHistory from "./models/CallHistory.js";
@@ -1538,7 +1540,7 @@ const safeMessageType = allowedTypes.includes(req.body?.messageType)
 });
 
 app.post("/signup", async (req, res) => {
-    const { name, email, password } = req.body;
+    const { name, email, password,publicKey} = req.body;
     try {
         const safeName = String(name || "").trim();
         const safeEmail = normalizeEmail(email);
@@ -1560,11 +1562,17 @@ app.post("/signup", async (req, res) => {
         if (existingUser) {
             return res.json({ message: "User already exists" });
         }
+        if (!publicKey) {
+    return res.status(400).json({
+        message: "Public key is required"
+    });
+}
         const hashedPassword=await bcrypt.hash(password,10);
         const newUser = new User({
             name: safeName,
             email: safeEmail,
             password: hashedPassword,
+            publicKey,
             isOnline: false,
             lastSeen: null
         });
@@ -1695,14 +1703,15 @@ app.post("/profile/photo", requireAuth, async (req, res) => {
 });
 app.post("/create-group",requireAuth,async(req,res)=>{
     try{
-        const{name,members}=req.body;
+        const{name,members,groupKeys}=req.body;
 
         const allMembers=[...new Set([...members,req.user.email])];
 
         const group=await Group.create({
             name,
             members:allMembers,
-            admin:req.user.email
+            admin:req.user.email,
+            groupKeys: groupKeys || {}
         });
         allMembers.forEach(member=>{
             if(member===req.user.email) return;
@@ -1719,6 +1728,38 @@ app.post("/create-group",requireAuth,async(req,res)=>{
         res.json({group});
     }catch(err){
         res.status(500).json({message:err.message});
+    }
+});
+
+app.post("/group/:groupId/rotate-keys", requireAuth, async (req, res) => {
+    try {
+        const { groupId } = req.params;
+        const { groupKeys } = req.body;
+        const group = await Group.findById(groupId);
+        if (!group) {
+            return res.status(404).json({ message: "Group not found" });
+        }
+        if (!group.members.includes(req.user.email)) {
+            return res.status(403).json({ message: "Not a member of this group" });
+        }
+        group.groupKeys = groupKeys || {};
+        group.groupKeyVersion = (group.groupKeyVersion || 1) + 1;
+        await group.save();
+
+        group.members.forEach(member => {
+            const memberSockets = Object.keys(users).filter(id => users[id]?.email === member);
+            memberSockets.forEach(id => {
+                io.to(id).emit("groupKeyUpdated", {
+                    groupId: group._id,
+                    groupKeys: group.groupKeys,
+                    groupKeyVersion: group.groupKeyVersion
+                });
+            });
+        });
+
+        res.json({ message: "Group keys updated successfully", group });
+    } catch (err) {
+        res.status(500).json({ message: err.message });
     }
 });
 app.post("/message/:id/star",requireAuth,async(req,res)=>{
@@ -2132,12 +2173,93 @@ app.get("/me", requireAuth, async (req, res) => {
     } catch (err) {
         res.status(500).json({ message: "Failed to load profile" });
     }
-})
+});
+
+app.post("/user/public-key", requireAuth, async (req, res) => {
+    try {
+        const { publicKey } = req.body;
+        if (!publicKey) {
+            return res.status(400).json({ message: "Public key required" });
+        }
+        await User.updateOne(
+            { email: req.user.email },
+            { $set: { publicKey } }
+        );
+        res.json({ message: "Public key updated successfully" });
+    } catch (err) {
+        res.status(500).json({ message: err.message });
+    }
+});
+
+app.get("/user/:email/public-key", requireAuth, async (req, res) => {
+    try {
+        const targetEmail = normalizeEmail(req.params.email);
+        const user = await User.findOne({ email: targetEmail });
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
+        res.json({ email: targetEmail, publicKey: user.publicKey || "" });
+    } catch (err) {
+        res.status(500).json({ message: err.message });
+    }
+});
 app.use("/api/ai", aiRoutes);
 app.use(
     "/uploads",
     express.static(path.join(__dirname, "uploads"))
 );
+
+// ── Cloud Backup Endpoints ──────────────────────────────────────────────────
+
+// POST /backup — create or update cloud backup
+app.post("/backup", requireAuth, async (req, res) => {
+    try {
+        const { messages, mediaMessages, settings, backupType } = req.body;
+        const existing = await Backup.findOne({ userEmail: req.user.email });
+        if (existing) {
+            existing.messages = messages || existing.messages;
+            existing.mediaMessages = mediaMessages || existing.mediaMessages;
+            existing.settings = settings || existing.settings;
+            existing.backupType = backupType || "full";
+            existing.updatedAt = new Date();
+            await existing.save();
+            return res.json({ message: "Backup updated successfully", backup: existing });
+        }
+        const backup = await Backup.create({
+            userEmail: req.user.email,
+            messages: messages || [],
+            mediaMessages: mediaMessages || [],
+            settings: settings || {},
+            backupType: backupType || "full"
+        });
+        res.json({ message: "Backup created successfully", backup });
+    } catch (err) {
+        res.status(500).json({ message: err.message });
+    }
+});
+
+// GET /backup — fetch the user's cloud backup
+app.get("/backup", requireAuth, async (req, res) => {
+    try {
+        const backup = await Backup.findOne({ userEmail: req.user.email });
+        if (!backup) {
+            return res.status(404).json({ message: "No backup found" });
+        }
+        res.json({ backup });
+    } catch (err) {
+        res.status(500).json({ message: err.message });
+    }
+});
+
+// DELETE /backup — delete the user's cloud backup
+app.delete("/backup", requireAuth, async (req, res) => {
+    try {
+        await Backup.deleteOne({ userEmail: req.user.email });
+        res.json({ message: "Backup deleted successfully" });
+    } catch (err) {
+        res.status(500).json({ message: err.message });
+    }
+});
 
 server.listen(5001, () => {
     console.log("Server runnnig on 5001");

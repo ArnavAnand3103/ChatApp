@@ -21,7 +21,8 @@ export default function ChatHeader({
     onPhotoClick,
 
     onAudioCall,
-    onVideoCall
+    onVideoCall,
+    onBackup
 }){
     const {user}=useAuth();
     const navigate=useNavigate();
@@ -107,7 +108,41 @@ export default function ChatHeader({
 
 </div>
                 <div className="header-info">
-                    <div className="header-name">{selectedUser?.name||"Select User"}</div>
+                    <div className="header-name" style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                        <span>{selectedUser?.name||"Select User"}</span>
+                        {selectedUser && !selectedUser.isGroup && selectedUser.email !== "ai@chatapp.com" && (
+                            <span 
+                                style={{ 
+                                    fontSize: "11px", 
+                                    color: "#10b981", 
+                                    background: "rgba(16, 185, 129, 0.15)", 
+                                    padding: "2px 8px", 
+                                    borderRadius: "12px", 
+                                    fontWeight: "600",
+                                    border: "1px solid rgba(16, 185, 129, 0.3)"
+                                }} 
+                                title="End-to-End Encrypted with RSA-OAEP + AES-GCM"
+                            >
+                                🔒 End-to-End Encrypted
+                            </span>
+                        )}
+                        {selectedUser?.isGroup && (
+                            <span 
+                                style={{ 
+                                    fontSize: "11px", 
+                                    color: "#10b981", 
+                                    background: "rgba(16, 185, 129, 0.15)", 
+                                    padding: "2px 8px", 
+                                    borderRadius: "12px", 
+                                    fontWeight: "600",
+                                    border: "1px solid rgba(16, 185, 129, 0.3)"
+                                }} 
+                                title="End-to-End Encrypted Group with AES-GCM 256 + RSA Key Wrapping"
+                            >
+                                🔒 End-to-End Encrypted Group
+                            </span>
+                        )}
+                    </div>
                     <div
     id="headerStatus"
     style={{
@@ -208,6 +243,26 @@ selectedUser?.email !== "ai@chatapp.com" && (
                  ⭐ Starred
                </button>
                 <button onClick={onAnalytics}>Analytics</button>
+                <button
+                    id="backupBtn"
+                    onClick={onBackup}
+                    title="Backup & Export"
+                    style={{
+                        background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
+                        color: "white",
+                        border: "none",
+                        borderRadius: "8px",
+                        padding: "6px 12px",
+                        fontWeight: "600",
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "5px",
+                        fontSize: "13px"
+                    }}
+                >
+                    ☁️ Backup
+                </button>
              {
 selectedUser?.email !== "ai@chatapp.com" && (
 

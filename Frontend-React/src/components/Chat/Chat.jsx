@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import Message from './Message';
-import { fetchMessages ,fetchGroupMessages,chatWithAI, generateImage, codeAssist} from '../../services/api';
+import { fetchMessages, fetchGroupMessages, fetchGroupInfo, chatWithAI, generateImage, codeAssist, fetchUserPublicKeyAPI } from '../../services/api';
+import { encryptE2EEMessage, decryptE2EEMessage, getOrGenerateUserKeys, decryptGroupKey, encryptGroupMessage, decryptGroupMessage } from '../../utils/crypto';
 import { useAuth } from '../../context/AuthContext';
 import { showNotification } from '../../utils/notification';
 import {useRef} from 'react';
@@ -21,12 +22,19 @@ export default function Chat({
     matchedIndexes: externalMatchedIndexes,
     setMatchedIndexes: externalSetMatchedIndexes,
     currentMatch: externalCurrentMatch,
-    setCurrentMatch: externalSetCurrentMatch
+    setCurrentMatch: externalSetCurrentMatch,
+    onMessagesChange
 }) {
 
     const { user, token } = useAuth();
 
     const [messages, setMessages] = useState([]);
+
+    // propagate messages to parent (for Backup modal)
+    useEffect(() => {
+        if (onMessagesChange) onMessagesChange(messages);
+    }, [messages, onMessagesChange]);
+
     const [showLocationMenu, setShowLocationMenu] = useState(false);
     const [showLiveLocationModal, setShowLiveLocationModal] = useState(false);
     const [isSharingLiveLocation, setIsSharingLiveLocation] = useState(false);
@@ -53,7 +61,12 @@ export default function Chat({
 
     const [aiTyping, setAiTyping] = useState(false);
     const [showAIModal, setShowAIModal] = useState(false);
+    const [currentGroupKey, setCurrentGroupKey] = useState(null);
+    const currentGroupKeyRef = useRef(null);
 
+    useEffect(() => {
+        currentGroupKeyRef.current = currentGroupKey;
+    }, [currentGroupKey]);
 
     const mediaRecorderRef = useRef(null);
     const audioChunksRef = useRef([]);
@@ -147,25 +160,65 @@ export default function Chat({
         if (!selectedUser) return;
 
         const loadMessages = async () => {
-            //Group selected
+            if (selectedUser?.isGroup) {
+                let groupKeys = selectedUser.groupKeys || {};
+                let groupInfo = null;
+                if (!groupKeys || Object.keys(groupKeys).length === 0) {
+                    try {
+                        groupInfo = await fetchGroupInfo(token, selectedUser._id);
+                        groupKeys = groupInfo?.groupKeys || {};
+                    } catch (e) {
+                        console.error("Failed to fetch group info:", e);
+                    }
+                }
+                const userKeys = await getOrGenerateUserKeys(user?.email);
+                let userEncKey = groupKeys[user.email] || (groupKeys.get ? groupKeys.get(user.email) : null);
+                let decGroupKey = null;
+                if (userEncKey && userKeys?.privateKey) {
+                    decGroupKey = await decryptGroupKey(userEncKey, userKeys.privateKey);
+                }
+                setCurrentGroupKey(decGroupKey);
+                currentGroupKeyRef.current = decGroupKey;
 
-              
-            if(selectedUser?.isGroup){
-
-              
-                const data=await fetchGroupMessages(
-                    token,
-                    selectedUser._id
+                const data = await fetchGroupMessages(token, selectedUser._id);
+                const decryptedGroupMsgs = await Promise.all(
+                    (data || []).map(async (msg) => {
+                        let m = { ...msg };
+                        if (m.message && typeof m.message === "string" && m.message.startsWith("[E2EE_GROUP]:")) {
+                            m.message = await decryptGroupMessage(m.message, decGroupKey);
+                        }
+                        if (m.mediaUrl && typeof m.mediaUrl === "string" && m.mediaUrl.startsWith("[E2EE_GROUP]:")) {
+                            m.mediaUrl = await decryptGroupMessage(m.mediaUrl, decGroupKey);
+                        }
+                        return m;
+                    })
                 );
-                setMessages(data);
+                setMessages(decryptedGroupMsgs);
                 return;
             }
+
+            setCurrentGroupKey(null);
+            currentGroupKeyRef.current = null;
+
             const data = await fetchMessages(token, selectedUser.email);
-            setMessages(data);
+            const userKeys = await getOrGenerateUserKeys(user?.email);
+            const decryptedData = await Promise.all(
+                (data || []).map(async (msg) => {
+                    let m = { ...msg };
+                    if (m.message && typeof m.message === "string" && m.message.startsWith("[E2EE]:")) {
+                        m.message = await decryptE2EEMessage(m.message, userKeys?.privateKey);
+                    }
+                    if (m.mediaUrl && typeof m.mediaUrl === "string" && m.mediaUrl.startsWith("[E2EE]:")) {
+                        m.mediaUrl = await decryptE2EEMessage(m.mediaUrl, userKeys?.privateKey);
+                    }
+                    return m;
+                })
+            );
+            setMessages(decryptedData);
             setStatusMap({});
 
             setTimeout(() => {
-                markMessageSeen(data);
+                markMessageSeen(decryptedData);
             }, 200);
         };
 
@@ -175,45 +228,66 @@ export default function Chat({
     useEffect(() => {
         if (!socket) return;
 
-        const handler = (msg) => {
+        const handler = async (msg) => {
             const from = msg.fromEmail || msg.from;
             const to = msg.toEmail || msg.to;
+            let processedMsg = { ...msg };
+
+            if (processedMsg.message && typeof processedMsg.message === "string") {
+                if (processedMsg.message.startsWith("[E2EE]:")) {
+                    const userKeys = await getOrGenerateUserKeys(user?.email);
+                    processedMsg.message = await decryptE2EEMessage(processedMsg.message, userKeys?.privateKey);
+                } else if (processedMsg.message.startsWith("[E2EE_GROUP]:")) {
+                    processedMsg.message = await decryptGroupMessage(processedMsg.message, currentGroupKeyRef.current);
+                }
+            }
+
+            if (processedMsg.mediaUrl && typeof processedMsg.mediaUrl === "string") {
+                if (processedMsg.mediaUrl.startsWith("[E2EE]:")) {
+                    const userKeys = await getOrGenerateUserKeys(user?.email);
+                    processedMsg.mediaUrl = await decryptE2EEMessage(processedMsg.mediaUrl, userKeys?.privateKey);
+                } else if (processedMsg.mediaUrl.startsWith("[E2EE_GROUP]:")) {
+                    processedMsg.mediaUrl = await decryptGroupMessage(processedMsg.mediaUrl, currentGroupKeyRef.current);
+                }
+            }
+
             if (
                 from === selectedUser?.email ||
-                to === selectedUser?.email
+                to === selectedUser?.email ||
+                (selectedUser?.isGroup && (to === selectedUser._id || from === selectedUser._id))
             ) {
                 setMessages(prev => {
                     const duplicateIndex = prev.findIndex(m =>
-                        (m._id && msg._id && String(m._id) === String(msg._id)) ||
-                        (m.clientMessageId && msg.clientMessageId && m.clientMessageId === msg.clientMessageId)
+                        (m._id && processedMsg._id && String(m._id) === String(processedMsg._id)) ||
+                        (m.clientMessageId && processedMsg.clientMessageId && m.clientMessageId === processedMsg.clientMessageId)
                     );
 
                     if (duplicateIndex !== -1) {
                         const updated = [...prev];
                         updated[duplicateIndex] = {
                             ...updated[duplicateIndex],
-                            ...msg,
-                            clientMessageId: updated[duplicateIndex].clientMessageId || msg.clientMessageId,
-                            createdAt: updated[duplicateIndex].createdAt || msg.createdAt
+                            ...processedMsg,
+                            clientMessageId: updated[duplicateIndex].clientMessageId || processedMsg.clientMessageId,
+                            createdAt: updated[duplicateIndex].createdAt || processedMsg.createdAt
                         };
                         return updated;
                     }
 
-                    return [...prev, msg];
+                    return [...prev, processedMsg];
                 });
             }
             else {
-                showNotification("New Message", msg.messageType === "media" ? "Sent a media message" : msg.message);
+                showNotification("New Message", processedMsg.messageType === "media" ? "Sent a media message" : processedMsg.message);
             }
 
-            if (msg.clientMessageId) {
+            if (processedMsg.clientMessageId) {
                 setStatusMap(prev => ({
                     ...prev,
-                    [msg.clientMessageId]: msg.status || "delivered"
+                    [processedMsg.clientMessageId]: processedMsg.status || "delivered"
                 }));
             }
 
-            channelRef.current?.postMessage({type:"incoming",message:msg});
+            channelRef.current?.postMessage({type:"incoming",message:processedMsg});
         };
 
         const statusHandler = ({ status, clientMessageId }) => {
@@ -229,17 +303,29 @@ export default function Chat({
                 setMessages([]);
             }
         };
-        
-   
+
+        const groupKeyUpdatedHandler = async ({ groupId, groupKeys }) => {
+            if (selectedUser?.isGroup && selectedUser._id === groupId) {
+                const userKeys = await getOrGenerateUserKeys(user?.email);
+                let userEncKey = groupKeys[user.email] || (groupKeys.get ? groupKeys.get(user.email) : null);
+                if (userEncKey && userKeys?.privateKey) {
+                    const decKey = await decryptGroupKey(userEncKey, userKeys.privateKey);
+                    setCurrentGroupKey(decKey);
+                    currentGroupKeyRef.current = decKey;
+                }
+            }
+        };
 
         socket.on("receiveMessage", handler);
         socket.on("messageStatus", statusHandler);
         socket.on("chatDeleted", chatDeletedHandler);
+        socket.on("groupKeyUpdated", groupKeyUpdatedHandler);
 
         return () => {
             socket.off("receiveMessage", handler);
             socket.off("messageStatus", statusHandler);
             socket.off("chatDeleted", chatDeletedHandler);
+            socket.off("groupKeyUpdated", groupKeyUpdatedHandler);
         };
 
     }, [socket, selectedUser]);
@@ -437,19 +523,26 @@ socket.on("liveLocationStopped", ({ liveLocationId,from }) => {
     useEffect(()=>{
         if(!socket) return;
 
-        const handler=(msg)=>{
-            if(msg.groupId!=null&&String(msg.groupId)===String(selectedUser?._id)){
-                setMessages(prev=>{
-                    const isDuplicate=prev.some(m=>m._id&&m._id===msg._id?.toString());
-                    if(isDuplicate) return prev;
-                    return [...prev,msg];
+        const handler = async (msg) => {
+            if (msg.groupId != null && String(msg.groupId) === String(selectedUser?._id)) {
+                let processedMsg = { ...msg };
+                if (processedMsg.message && typeof processedMsg.message === "string" && processedMsg.message.startsWith("[E2EE_GROUP]:")) {
+                    processedMsg.message = await decryptGroupMessage(processedMsg.message, currentGroupKeyRef.current);
+                }
+                if (processedMsg.mediaUrl && typeof processedMsg.mediaUrl === "string" && processedMsg.mediaUrl.startsWith("[E2EE_GROUP]:")) {
+                    processedMsg.mediaUrl = await decryptGroupMessage(processedMsg.mediaUrl, currentGroupKeyRef.current);
+                }
+                setMessages(prev => {
+                    const isDuplicate = prev.some(m => m._id && m._id === msg._id?.toString());
+                    if (isDuplicate) return prev;
+                    return [...prev, processedMsg];
                 });
             }
         };
-        socket.on("receiveGroupMessage",handler);
+        socket.on("receiveGroupMessage", handler);
 
-        return()=>socket.off("receiveGroupMessage",handler);
-    },[socket,selectedUser])
+        return () => socket.off("receiveGroupMessage", handler);
+    }, [socket, selectedUser]);
     useEffect(()=>{
         if(!searchTextValue.trim()){
             setMatchedList([]);
@@ -845,8 +938,36 @@ try {
 }
 
  if (selectedUser?.isGroup) {
+    if (!text.trim() && !file) return;
 
-    if (!text.trim()) return;
+    let mediaUrl = "";
+    let messageType = "text";
+    if (file) {
+        mediaUrl = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result || ""));
+            reader.onerror = () => reject(new Error("Failed to read media"));
+            reader.readAsDataURL(file);
+        });
+        if (file.type.startsWith("image")) {
+            messageType = "image";
+        } else if (file.type.startsWith("video")) {
+            messageType = "video";
+        } else {
+            messageType = "document";
+        }
+    }
+
+    let outgoingText = text;
+    let outgoingMediaUrl = mediaUrl;
+    if (currentGroupKeyRef.current) {
+        if (text.trim()) {
+            outgoingText = await encryptGroupMessage(text, currentGroupKeyRef.current);
+        }
+        if (mediaUrl) {
+            outgoingMediaUrl = await encryptGroupMessage(mediaUrl, currentGroupKeyRef.current);
+        }
+    }
 
   const replyData = {
         replyTo: replyMessage?._id || null,
@@ -873,7 +994,10 @@ try {
 
     socket.emit("groupMessage", {
         groupId: selectedUser._id,
-        message: text,
+        message: outgoingText,
+        mediaUrl: outgoingMediaUrl,
+        messageType,
+        fileName: file?.name || "",
         ...replyData
     });
 
@@ -881,6 +1005,8 @@ try {
 
     setReplyMessage(null);
     setText("");
+    setFile(null);
+    setPreview(null);
     return;
 }
 
@@ -918,11 +1044,33 @@ if (file) {
     }
 }
 
+        let outgoingText = text;
+        let outgoingMediaUrl = mediaUrl;
+
+        if (selectedUser?.email && selectedUser.email !== "ai@chatapp.com" && !selectedUser.isGroup) {
+            try {
+                let recipientPubKey = selectedUser.publicKey;
+                if (!recipientPubKey) {
+                    const pkRes = await fetchUserPublicKeyAPI(token, selectedUser.email);
+                    recipientPubKey = pkRes?.publicKey;
+                }
+                const userKeys = await getOrGenerateUserKeys(user?.email);
+                if (text.trim()) {
+                    outgoingText = await encryptE2EEMessage(text, recipientPubKey, userKeys?.publicKey);
+                }
+                if (mediaUrl) {
+                    outgoingMediaUrl = await encryptE2EEMessage(mediaUrl, recipientPubKey, userKeys?.publicKey);
+                }
+            } catch (encErr) {
+                console.error("Failed to encrypt message:", encErr);
+            }
+        }
+
         const msg = {
             to: selectedUser.email,
-            message: text,
+            message: outgoingText,
             messageType,
-            mediaUrl,
+            mediaUrl: outgoingMediaUrl,
             fileName: file?.name || "",
             clientMessageId,
 
@@ -956,6 +1104,7 @@ replyText:
             ...prev,
             {
                 ...msg,
+                message: text,
                 from: user.email,
                 createdAt: new Date()
             }

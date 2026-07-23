@@ -5,11 +5,13 @@ import Sidebar from '../components/Sidebar/Sidebar';
 import { useAuth } from '../context/AuthContext';
 
 import { createSocket } from '../services/socket';
-import { fetchAnalytics, fetchMe, uploadProfilePhoto } from '../services/api';
+import { fetchAnalytics, fetchMe, uploadProfilePhoto, updatePublicKeyAPI } from '../services/api';
+import { getOrGenerateUserKeys } from '../utils/crypto';
 
 import Chat from '../components/Chat/Chat';
 import ChatHeader from '../components/ChatHeader';
 import GroupInfoModal from '../components/GroupInfoModal';
+import BackupModal from '../components/BackupModal';
 import { requestNotificationPermission } from "../utils/notification";
 import PhotoViewer from '../components/PhotoViewer';
 
@@ -49,6 +51,8 @@ export default function ChatPage() {
   const [searchText, setSearchText] = useState("");
   const [matchedIndexes, setMatchedIndexes] = useState([]);
   const [currentMatch, setCurrentMatch] = useState(0);
+  const [showBackup, setShowBackup] = useState(false);
+  const [chatMessages, setChatMessages] = useState([]);
   const [photoViewer, setPhotoViewer] = useState({
     open: false,
     photo: "",
@@ -116,6 +120,21 @@ export default function ChatPage() {
     document.body.setAttribute("data-theme", theme);
     localStorage.setItem("chatTheme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    if (!token || !user?.email) return;
+    const syncKeys = async () => {
+      try {
+        const userKeys = await getOrGenerateUserKeys(user.email);
+        if (userKeys?.publicKey) {
+          await updatePublicKeyAPI(token, userKeys.publicKey);
+        }
+      } catch (err) {
+        console.error("Failed to sync E2EE public key:", err);
+      }
+    };
+    syncKeys();
+  }, [token, user]);
 
   useEffect(() => {
     if (!token) return;
@@ -608,6 +627,7 @@ export default function ChatPage() {
               isBlocked={isBlocked}
               myPhoto={myPhoto}
               onShowGroupInfo={() => setShowGroupInfo(true)}
+              onBackup={() => setShowBackup(true)}
               onPhotoClick={() => {
                 if (!selectedUser) return;
                 const photo = selectedUser.isGroup
@@ -644,6 +664,7 @@ export default function ChatPage() {
               setMatchedIndexes={setMatchedIndexes}
               currentMatch={currentMatch}
               setCurrentMatch={setCurrentMatch}
+              onMessagesChange={setChatMessages}
 
             />
           </div>
@@ -659,6 +680,14 @@ export default function ChatPage() {
             onClose={() => setShowGroupInfo(false)}
           />
         )}
+      {showBackup && (
+        <BackupModal
+          onClose={() => setShowBackup(false)}
+          messages={chatMessages}
+          selectedUser={selectedUser}
+        />
+      )}
+
       {photoViewer.open && (
         <PhotoViewer
           photo={photoViewer.photo}

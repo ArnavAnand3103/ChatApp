@@ -1,7 +1,10 @@
 import {useState} from 'react';
 
 import {useNavigate} from 'react-router-dom';
+import nacl from "tweetnacl";
+import * as naclUtil from "tweetnacl-util";
 import {signupRequest} from '../services/api';
+import {getOrGenerateUserKeys} from '../utils/crypto';
 
 export default function Signup(){
     const navigate=useNavigate();
@@ -40,8 +43,14 @@ export default function Signup(){
         }
 
         try{
-            const data=await signupRequest(safeName,safeEmail,password);
+            const userKeys = await getOrGenerateUserKeys(safeEmail);
+            const publicKey = userKeys.publicKey;
+            const privateKey = userKeys.privateKey;
+            const data=await signupRequest(safeName,safeEmail,password,publicKey);
             if(data.message==="Signup successful"){
+                localStorage.setItem("privateKey", privateKey);
+                localStorage.setItem(`e2ee_priv_${safeEmail.toLowerCase()}`, privateKey);
+                localStorage.setItem(`e2ee_pub_${safeEmail.toLowerCase()}`, publicKey);
                 alert("Signup success");
                 navigate("/login");
             }else{

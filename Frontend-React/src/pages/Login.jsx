@@ -44,7 +44,7 @@ export default function Login(){
 
     // ── Google Sign-In ────────────────────────────────────────────────────────
     const handleGoogleSignIn = useCallback(async () => {
-        const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || '726776172229-j3ssjks14vcfeie49gc35q20qut1bp8o.apps.googleusercontent.com';
+        const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || '458068371661-u54226a1rit2taa9pqjmvpcvguhmjcl5.apps.googleusercontent.com';
         if (!clientId) {
             alert('Google Client ID is not configured in .env');
             return;

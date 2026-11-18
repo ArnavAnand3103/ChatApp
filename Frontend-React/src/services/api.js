@@ -205,7 +205,6 @@ export const fetchGroupInfo=async(token,groupId)=>{
                 "Authorization":`Bearer ${token}`
             }
         }
-    }
     );
     return await res.json();
 }
@@ -321,8 +320,9 @@ export const getArchivedChats=async(token)=>{
         headers:{
             Authorization: `Bearer ${token}`
         }
-    );
-    return await res.json();
+    }
+  );
+  return await res.json();
 }
 export async function uploadGroupPhoto(token, groupId, photo) {
 

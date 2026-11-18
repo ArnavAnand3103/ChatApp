@@ -56,7 +56,9 @@ useEffect(()=>{
     };
 },[]);
 
-    const isMe=msg.from===currentUser.email;
+    const myEmail = (currentUser?.email || "").toLowerCase();
+    const msgFrom = (msg.from || msg.fromEmail || "").toLowerCase();
+    const isMe = Boolean(msg.fromSelf || (myEmail && msgFrom === myEmail));
     if (msg.messageType === "location") {
     console.log("LOCATION MESSAGE:", msg);
 }

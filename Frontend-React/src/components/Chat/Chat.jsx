@@ -74,6 +74,7 @@ export default function Chat({
     const bottomRef = useRef(null);
     const messageRefs = useRef([]);
     const typingTimeoutRef = useRef(null);
+    const isSendingRef = useRef(false);
 
     const canE2EE = Boolean(e2eeState?.messageEncryptionEnabled && e2eeAvailable() && user?.email);
 
@@ -186,29 +187,73 @@ export default function Chat({
         if (!socket) return;
 
         const handler = async (msg) => {
-            const from = msg.fromEmail || msg.from;
-            const to = msg.toEmail || msg.to;
-            if (
-                from === selectedUser?.email ||
-                to === selectedUser?.email
-            ) {
+            const from = (msg.fromEmail || msg.from || "").toLowerCase();
+            const to = (msg.toEmail || msg.to || "").toLowerCase();
+            const currentSelectedEmail = (selectedUser?.email || "").toLowerCase();
+            const myEmail = (user?.email || "").toLowerCase();
+
+            const isCurrentChat =
+                from === currentSelectedEmail ||
+                to === currentSelectedEmail ||
+                (selectedUser?.isGroup && (String(msg.groupId) === String(selectedUser._id) || String(msg.to) === String(selectedUser._id)));
+
+            if (isCurrentChat) {
                 const dmsg = await decryptIncoming(msg);
+                const dmsgId = dmsg._id ? String(dmsg._id) : "";
+                const dmsgClientId = dmsg.clientMessageId ? String(dmsg.clientMessageId) : "";
+                const dmsgFrom = (dmsg.from || dmsg.fromEmail || "").toLowerCase();
+                const dmsgTo = (dmsg.to || dmsg.toEmail || "").toLowerCase();
+                const isFromMe = Boolean(dmsg.fromSelf || dmsgFrom === myEmail);
+
                 setMessages(prev => {
-                    const duplicateIndex = prev.findIndex(m =>
-                        (m._id && dmsg._id && String(m._id) === String(dmsg._id)) ||
-                        (m.clientMessageId && dmsg.clientMessageId && m.clientMessageId === dmsg.clientMessageId) ||
-                        (!m._id && m.from === dmsg.from && m.message === dmsg.message && m.messageType === dmsg.messageType)
-                    );
+                    const duplicateIndex = prev.findIndex(m => {
+                        const mId = m._id ? String(m._id) : "";
+                        const mClientId = m.clientMessageId ? String(m.clientMessageId) : "";
+                        const mFrom = (m.from || m.fromEmail || "").toLowerCase();
+                        const mTo = (m.to || m.toEmail || "").toLowerCase();
+
+                        // 1. Same MongoDB _id
+                        if (mId && dmsgId && mId === dmsgId) return true;
+
+                        // 2. Same clientMessageId
+                        if (mClientId && dmsgClientId && mClientId === dmsgClientId) return true;
+
+                        // 3. Optimistic message without _id matching sender, content, and type
+                        if (!mId && mFrom === dmsgFrom && m.message === dmsg.message && (m.messageType || "text") === (dmsg.messageType || "text")) {
+                            return true;
+                        }
+
+                        // 4. Fallback for self-sent message matching content created very recently
+                        if (isFromMe && mFrom === dmsgFrom && m.message === dmsg.message && (m.messageType || "text") === (dmsg.messageType || "text")) {
+                            const timeDiff = Math.abs(new Date(m.createdAt || 0).getTime() - new Date(dmsg.createdAt || 0).getTime());
+                            if (timeDiff < 20000) return true;
+                        }
+
+                        return false;
+                    });
 
                     if (duplicateIndex !== -1) {
                         const updated = [...prev];
                         updated[duplicateIndex] = {
                             ...updated[duplicateIndex],
                             ...dmsg,
+                            _id: dmsg._id || updated[duplicateIndex]._id,
                             clientMessageId: updated[duplicateIndex].clientMessageId || dmsg.clientMessageId,
-                            createdAt: updated[duplicateIndex].createdAt || dmsg.createdAt
+                            createdAt: updated[duplicateIndex].createdAt || dmsg.createdAt,
+                            status: dmsg.status || updated[duplicateIndex].status
                         };
                         return updated;
+                    }
+
+                    // If it is from myself and already exists in recent messages, do not append duplicate
+                    if (isFromMe) {
+                        const recentSame = prev.slice(-5).some(m => {
+                            const mFrom = (m.from || m.fromEmail || "").toLowerCase();
+                            return mFrom === dmsgFrom && m.message === dmsg.message && (m.messageType || "text") === (dmsg.messageType || "text");
+                        });
+                        if (recentSame) {
+                            return prev;
+                        }
                     }
 
                     return [...prev, dmsg];
@@ -976,68 +1021,77 @@ const sendMessage = async () => {
     }
 
     if (isBlocked) return;
+    if (isSendingRef.current) return;
 
     if (!text.trim() && !queuedFiles.length) return;
 
+    isSendingRef.current = true;
+    const textToSend = text;
+    const replyToSend = replyMessage;
+    const fileToSend = file;
 
-       
+    setText("");
+    setFile(null);
+    setPreview(null);
+    setFiles([]);
+    setReplyMessage(null);
 
+    try {
         const clientMessageId = Date.now().toString();
 
         let mediaUrl = "";
-       let messageType = "text";
+        let messageType = "text";
 
-if (file) {
+        if (fileToSend) {
+            mediaUrl = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
 
-    mediaUrl = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
+                reader.onload = () => resolve(String(reader.result || ""));
+                reader.onerror = () => reject(new Error("Failed to read media"));
 
-        reader.onload = () => resolve(String(reader.result || ""));
-        reader.onerror = () => reject(new Error("Failed to read media"));
+                reader.readAsDataURL(fileToSend);
+            });
 
-        reader.readAsDataURL(file);
-    });
-
-    if (file.type.startsWith("image")) {
-        messageType = "image";
-    }
-    else if (file.type.startsWith("video")) {
-        messageType = "video";
-    }
-    else if (file.type.startsWith("audio")) {
-        messageType = "audio";
-    }
-    else {
-        messageType = "document";
-    }
-}
+            if (fileToSend.type.startsWith("image")) {
+                messageType = "image";
+            }
+            else if (fileToSend.type.startsWith("video")) {
+                messageType = "video";
+            }
+            else if (fileToSend.type.startsWith("audio")) {
+                messageType = "audio";
+            }
+            else {
+                messageType = "document";
+            }
+        }
 
         const msg = {
             to: selectedUser.email,
-            message: text,
+            message: textToSend,
             messageType,
             mediaUrl,
-            fileName: file?.name || "",
+            fileName: fileToSend?.name || "",
             clientMessageId,
 
-            replyTo: replyMessage?._id || null,
-replyText:
-    replyMessage?.messageType === "voice"
-        ? "🎤 Voice message"
-    : replyMessage?.messageType === "image"
-        ? "🖼 Photo"
-    : replyMessage?.messageType === "video"
-        ? "🎥 Video"
-    : replyMessage?.messageType === "document"
-        ? `📄 ${replyMessage.fileName || "Document"}`
-    :replyMessage?.messageType === "location"
-        ? (
-            replyMessage?.isLive
-                ? "🌍 Live Location"
-                : "📍 Current Location"
-          )
-    : replyMessage?.message || "",
-        replySender: replyMessage?.user || replyMessage?.from || ""
+            replyTo: replyToSend?._id || null,
+            replyText:
+                replyToSend?.messageType === "voice"
+                    ? "🎤 Voice message"
+                : replyToSend?.messageType === "image"
+                    ? "🖼 Photo"
+                : replyToSend?.messageType === "video"
+                    ? "🎥 Video"
+                : replyToSend?.messageType === "document"
+                    ? `📄 ${replyToSend.fileName || "Document"}`
+                : replyToSend?.messageType === "location"
+                    ? (
+                        replyToSend?.isLive
+                            ? "🌍 Live Location"
+                            : "📍 Current Location"
+                      )
+                : replyToSend?.message || "",
+            replySender: replyToSend?.user || replyToSend?.from || ""
         };
 
         if (canE2EE && !selectedUser?.isGroup) {
@@ -1071,14 +1125,10 @@ replyText:
             ...prev,
             [clientMessageId]: "sent"
         }));
-     
-        
-        setText("");
-        setFile(null);
-        setPreview(null);
-        setFiles([]);
-        setReplyMessage(null);
-    };
+    } finally {
+        isSendingRef.current = false;
+    }
+};
 
     const handleFileChange = (e) => {
         const selected = Array.from(e.target.files || []);

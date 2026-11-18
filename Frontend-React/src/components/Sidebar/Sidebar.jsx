@@ -98,9 +98,10 @@ const archivedGroups = groups.filter(group =>
     useEffect(()=>{
         if(!socket) return;
         const handler=(msg)=>{
-            const from = msg.fromEmail || msg.from;
-            const to = msg.toEmail || msg.to;
-            const isMe = from === user.email;
+            const from = (msg.fromEmail || msg.from || "").toLowerCase();
+            const to = (msg.toEmail || msg.to || "").toLowerCase();
+            const myEmail = (user?.email || "").toLowerCase();
+            const isMe = Boolean(msg.fromSelf || (myEmail && from === myEmail));
             const otherUser = isMe ? to : from;
 
             // Update Last Message Preview
@@ -111,7 +112,7 @@ const archivedGroups = groups.filter(group =>
             setUsers(prev=>{
                 const updated=[...prev];
                 const index=updated.findIndex(
-                    u=>u.email===otherUser
+                    u=>u.email?.toLowerCase() === otherUser
                 );
                 if(index>-1){
                     const [chat]=updated.splice(index,1);
@@ -121,7 +122,8 @@ const archivedGroups = groups.filter(group =>
             })
 
             // Increment Unread if not current chat and not from me
-            if(!isMe && otherUser !== selectedUser?.email){
+            const currentSelectedEmail = (selectedUser?.email || "").toLowerCase();
+            if(!isMe && otherUser !== currentSelectedEmail){
                 setUnreadCounts(prev=>({
                     ...prev,
                     [otherUser]:(prev[otherUser]||0)+1

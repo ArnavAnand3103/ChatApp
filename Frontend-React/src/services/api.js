@@ -1,4 +1,4 @@
-const API_BASE="http://localhost:5001";
+const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:5001";
 
 const authHeaders=(token,withJson=true)=>({
     ...(withJson?{"Content-Type":"application/json"}:{}),
@@ -179,7 +179,7 @@ export const downloadMedia=async(token, messageId)=>{
     return res.blob();
 };
 export const createGroup=async(token,data)=>{
-    const res=await fetch("http://localhost:5001/create-group",{
+    const res=await fetch(`${API_BASE}/create-group`,{
         method:"POST",
         headers:{
             "Content-Type":"application/json",
@@ -191,7 +191,7 @@ export const createGroup=async(token,data)=>{
 }
 
 export const getGroups=async(token)=>{
-    const res=await fetch("http://localhost:5001/groups",{
+    const res=await fetch(`${API_BASE}/groups`,{
         headers:{
             "Authorization":`Bearer ${token}`
         }
@@ -200,7 +200,7 @@ export const getGroups=async(token)=>{
 }
 export const fetchGroupInfo=async(token,groupId)=>{
     const res=await fetch(
-        `http://localhost:5001/group/${groupId}`,{
+        `${API_BASE}/group/${groupId}`,{
             headers:{
                 "Authorization":`Bearer ${token}`
             }
@@ -224,7 +224,7 @@ export const fetchGroupMessages=async(
 }
 export const leaveGroup=async(token,groupId)=>{
     const res=await fetch(
-        `http://localhost:5001/group/${groupId}/leave`,
+        `${API_BASE}/group/${groupId}/leave`,
         {
             method:"POST",
             headers:{
@@ -240,7 +240,7 @@ export const addMemberToGroup=async(
     email
 )=>{
     const res=await fetch(
-        `http://localhost:5001/group/${groupId}/add-member`,
+        `${API_BASE}/group/${groupId}/add-member`,
         {
             method:"POST",
             headers:{
@@ -259,7 +259,7 @@ export const removeMemberFromGroup=async(
     email
 )=>{
     const res=await fetch(
-        `http://localhost:5001/group/${groupId}/remove-member`,
+        `${API_BASE}/group/${groupId}/remove-member`,
         {
             method:"POST",
             headers:{
@@ -279,7 +279,7 @@ export const archiveChat=async(
     chatType
 )=>{
     const res=await fetch(
-        "http://localhost:5001/archive",
+        `${API_BASE}/archive`,
         {
             method:"POST",
             headers:{
@@ -299,7 +299,7 @@ export const unarchiveChat=async(
     chatId
 )=>{
     const res=await fetch(
-        "http://localhost:5001/unarchive",
+        `${API_BASE}/unarchive`,
         {
             method:"POST",
             headers:{
@@ -315,7 +315,7 @@ export const unarchiveChat=async(
 }
 export const getArchivedChats=async(token)=>{
   const res=await fetch(
-    "http://localhost:5001/archived",
+    `${API_BASE}/archived`,
     {
         headers:{
             Authorization: `Bearer ${token}`
@@ -342,7 +342,7 @@ export async function uploadGroupPhoto(token, groupId, photo) {
 }
 export const starMessage=async(token,messageId)=>{
     const res=await fetch(
-        `http://localhost:5001/message/${messageId}/star`,
+        `${API_BASE}/message/${messageId}/star`,
         {
             method:"POST",
             headers:{
@@ -354,7 +354,7 @@ export const starMessage=async(token,messageId)=>{
 }
 export const fetchStarredMessages=async(token)=>{
     const res=await fetch(
-        "http://localhost:5001/messages/starred",
+        `${API_BASE}/messages/starred`,
         {
             headers:{
                 Authorization:`Bearer ${token}`

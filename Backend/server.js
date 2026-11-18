@@ -2985,6 +2985,7 @@ app.use(
     express.static(path.join(__dirname, "uploads"))
 );
 
-server.listen(5001, () => {
-    console.log("Server runnnig on 5001");
-})
+const PORT = process.env.PORT || 5001;
+server.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+});

@@ -18,15 +18,6 @@ const groupSchema=new mongoose.Schema({
         type:String,
         default:""
     },
-    groupKeys:{
-        type: Map,
-        of: String,
-        default: {}
-    },
-    groupKeyVersion:{
-        type: Number,
-        default: 1
-    },
     createdAt:{
         type:Date,
         default:Date.now

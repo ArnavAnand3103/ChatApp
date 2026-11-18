@@ -1,41 +1,19 @@
 import Message from "../../models/Message.js";
-import { askAI, askCodingAI, summarizeChat, ragQuery, semanticSearchMessages, extractTasksFromChat, multiAgentOrchestrate } from "../services/aiService.js";
-import { generateHFImage, generateSticker, editImage } from "../services/imageService.js";
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
+import { askAI, describeAIError } from "../services/aiService.js";
+import { generateHFImage, editImageWithPrompt } from "../services/imageService.js";
+import {
+    indexDocument,
+    queryDocumentRAG,
+    getDocumentStatus as getDocStatusService,
+    clearDocumentIndex as clearDocIndexService,
+    queryChatRAG,
+    searchSemantic,
+    extractTasks as extractTasksService
+} from "../services/ragService.js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-
-const saveAIMessage = async ({
-    userEmail,
-    userMessage,
-    aiMessage = "",
-    mediaUrl = "",
-    messageType = "text"
-}) => {
-
-    await Message.create({
-        from: userEmail,
-        to: "ai@chatapp.com",
-        message: userMessage,
-        messageType: "text"
-    });
-
-    await Message.create({
-        from: "ai@chatapp.com",
-        to: userEmail,
-        message: aiMessage,
-        mediaUrl,
-        messageType
-    });
-
-};
-
-
-
+// ==========================================
+// 1. AI CHAT ASSISTANT
+// ==========================================
 export const chatWithAI = async (req, res) => {
     try {
         const { message } = req.body;
@@ -48,44 +26,33 @@ export const chatWithAI = async (req, res) => {
             });
         }
 
-        // Save user's latest message
+        // Fetch complete conversation between user and AI
+        // (the new message is NOT saved yet, so a failed call + retry
+        //  cannot duplicate messages in history)
+        const chatHistory = await Message.find({
+            $or: [
+                { from: userEmail, to: "ai@chatapp.com" },
+                { from: "ai@chatapp.com", to: userEmail }
+            ]
+        }).sort({ createdAt: 1 }).limit(50);
+
+        // Convert conversation into Groq chat format + append the new message
+        const messages = chatHistory.map((msg) => ({
+            role: msg.from === userEmail ? "user" : "assistant",
+            content: msg.message
+        }));
+        messages.push({ role: "user", content: message.trim() });
+
+        // Generate the reply first; persist both messages only on success
+        const reply = await askAI(messages);
+
         await Message.create({
             from: userEmail,
             to: "ai@chatapp.com",
-            message,
+            message: message.trim(),
             messageType: "text"
         });
 
-        // Fetch complete conversation
-        const chatHistory = await Message.find({
-            $or: [
-                {
-                    from: userEmail,
-                    to: "ai@chatapp.com"
-                },
-                {
-                    from: "ai@chatapp.com",
-                    to: userEmail
-                }
-            ]
-        }).sort({ createdAt: 1 });
-
-        // Convert conversation into Groq format
-        const messages = chatHistory.map((msg) => {
-            let content = msg.message || "";
-            if (!content && msg.messageType === "image") {
-                content = "[Generated Image]";
-            }
-            return {
-                role: msg.from === userEmail ? "user" : "assistant",
-                content: content
-            };
-        }).filter(m => m.content && m.content.trim() !== "");
-
-        // Get AI reply
-        const reply = await askAI(messages);
-
-        // Save AI reply
         await Message.create({
             from: "ai@chatapp.com",
             to: userEmail,
@@ -99,15 +66,47 @@ export const chatWithAI = async (req, res) => {
         });
 
     } catch (err) {
-        console.error(err);
-
+        console.error("AI Chat Error:", err);
         return res.status(500).json({
             success: false,
-            message: "AI Error"
+            message: describeAIError(err)
         });
     }
 };
 
+export const getAIHistory = async (req, res) => {
+    try {
+        const userEmail = req.user.email;
+        const chatHistory = await Message.find({
+            $or: [
+                { from: userEmail, to: "ai@chatapp.com" },
+                { from: "ai@chatapp.com", to: userEmail }
+            ]
+        }).sort({ createdAt: 1 }).limit(100);
+
+        return res.json({
+            success: true,
+            messages: chatHistory.map(m => ({
+                id: m._id,
+                from: m.from,
+                to: m.to,
+                message: m.message,
+                mediaUrl: m.mediaUrl,
+                createdAt: m.createdAt,
+                isAI: m.from === "ai@chatapp.com"
+            }))
+        });
+    } catch (err) {
+        return res.status(500).json({
+            success: false,
+            message: err.message
+        });
+    }
+};
+
+// ==========================================
+// 2. AI IMAGE GENERATION
+// ==========================================
 export const generateImage = async (req, res) => {
     try {
         const { prompt } = req.body;
@@ -116,34 +115,34 @@ export const generateImage = async (req, res) => {
         if (!prompt?.trim()) {
             return res.status(400).json({
                 success: false,
-                message: "Prompt is required"
+                message: "Image prompt is required"
             });
         }
 
-        console.log(`Generating AI image for prompt: "${prompt}"...`);
+        const result = await generateHFImage(prompt);
 
-        // Generate HF Image
-        const imageBuffer = await generateHFImage(prompt);
-        const base64Image = `data:image/png;base64,${imageBuffer.toString("base64")}`;
-
-        // Save messages to MongoDB using existing helper
-        await saveAIMessage({
-            userEmail,
-            userMessage: prompt,
-            aiMessage: "",
-            mediaUrl: base64Image,
-            messageType: "image"
-        });
-
-        console.log("AI Image successfully generated and saved.");
+        // Save record to Message history
+        try {
+            await Message.create({
+                from: "ai@chatapp.com",
+                to: userEmail,
+                message: `Generated Image: "${prompt}"`,
+                mediaUrl: result.imageUrl,
+                messageType: "image"
+            });
+        } catch (e) {
+            // ignore logging error
+        }
 
         return res.json({
             success: true,
-            imageUrl: base64Image
+            imageUrl: result.imageUrl,
+            base64Url: result.base64Url,
+            prompt
         });
 
     } catch (err) {
-        console.error("AI Image Generation Error:", err);
+        console.error("Image Gen Error:", err);
         return res.status(500).json({
             success: false,
             message: err.message || "Failed to generate image"
@@ -151,228 +150,253 @@ export const generateImage = async (req, res) => {
     }
 };
 
-// ────────────────────────────────────────────────────────────────
-// AI Coding Assistant  —  explain code, fix bugs, generate code
-// ────────────────────────────────────────────────────────────────
-export const codeAssist = async (req, res) => {
+// ==========================================
+// 2b. AI IMAGE EDITING (two-step prompt flow)
+// ==========================================
+export const editImage = async (req, res) => {
     try {
-        const { message } = req.body;
         const userEmail = req.user.email;
+        const { basePrompt, editPrompt } = req.body;
 
-        if (!message?.trim()) {
+        if (!basePrompt?.trim()) {
             return res.status(400).json({
                 success: false,
-                message: "Message is required"
+                message: "Base image prompt is required (describe the image first)"
+            });
+        }
+        if (!editPrompt?.trim()) {
+            return res.status(400).json({
+                success: false,
+                message: "Edit prompt is required (describe the change to apply)"
             });
         }
 
-        // 1. Save the user's coding question
-        await Message.create({
-            from: userEmail,
-            to: "ai@chatapp.com",
-            message,
-            messageType: "text"
-        });
+        const result = await editImageWithPrompt(basePrompt.trim(), editPrompt.trim());
 
-        // 2. Load the full conversation history between user and AI
-        const chatHistory = await Message.find({
-            $or: [
-                { from: userEmail, to: "ai@chatapp.com" },
-                { from: "ai@chatapp.com", to: userEmail }
-            ]
-        }).sort({ createdAt: 1 });
-
-        // 3. Map history to Groq message format, skip empty content
-        const messages = chatHistory.map((msg) => {
-            let content = msg.message || "";
-            if (!content && msg.messageType === "image") {
-                content = "[Generated Image]";
-            }
-            return {
-                role: msg.from === userEmail ? "user" : "assistant",
-                content
-            };
-        }).filter(m => m.content && m.content.trim() !== "");
-
-        // 4. Ask the coding-specific AI (with system prompt)
-        const reply = await askCodingAI(messages);
-
-        // 5. Save the AI's coding reply
-        await Message.create({
-            from: "ai@chatapp.com",
-            to: userEmail,
-            message: reply,
-            messageType: "code"
-        });
-
-        console.log("✅ Code assistant reply saved.");
+        // Save record to Message history (same pattern as image generation)
+        try {
+            await Message.create({
+                from: "ai@chatapp.com",
+                to: userEmail,
+                message: `Edited Image: "${editPrompt.trim()}"`,
+                mediaUrl: result.imageUrl,
+                messageType: "image"
+            });
+        } catch (e) {
+            // ignore logging error
+        }
 
         return res.json({
             success: true,
-            reply
+            imageUrl: result.imageUrl,
+            base64Url: result.base64Url,
+            basePrompt: result.basePrompt,
+            editPrompt: result.editPrompt
         });
 
-    } catch (err) {
-        console.error("Code Assist Error:", err);
-        return res.status(500).json({
-            success: false,
-            message: err.message || "Code assistant error"
-        });
-    }
-};
-
-// ── Helper: get chat messages between user and a target ───────────
-const getChatHistory = async (userEmail, withEmail) => {
-    if (withEmail && !withEmail.includes("@")) {
-        return Message.find({
-            to: withEmail
-        }).sort({ createdAt: 1 });
-    }
-    return Message.find({
-        $or: [
-            { from: userEmail, to: withEmail },
-            { from: withEmail, to: userEmail }
-        ]
-    }).sort({ createdAt: 1 });
-};
-
-// ── Chat Summarization ────────────────────────────────────────────
-export const summarizeChatController = async (req, res) => {
-    try {
-        const { withEmail } = req.body;
-        const userEmail = req.user.email;
-        if (!withEmail?.trim()) return res.status(400).json({ success: false, message: "withEmail is required" });
-
-        const history = await getChatHistory(userEmail, withEmail);
-        if (!history.length) return res.json({ success: true, summary: "No messages found in this conversation." });
-
-        const summary = await summarizeChat(history);
-        return res.json({ success: true, summary });
-    } catch (err) {
-        console.error("Summarize Error:", err);
-        return res.status(500).json({ success: false, message: err.message || "Failed to summarize" });
-    }
-};
-
-// ── Chat RAG ──────────────────────────────────────────────────────
-export const chatRAGController = async (req, res) => {
-    try {
-        const { withEmail, question } = req.body;
-        const userEmail = req.user.email;
-        if (!withEmail?.trim() || !question?.trim()) return res.status(400).json({ success: false, message: "withEmail and question are required" });
-
-        const history = await getChatHistory(userEmail, withEmail);
-        const context = history.map(m => `${m.from}: ${m.message || "[media]"}`).join("\n");
-
-        const answer = await ragQuery(question, context);
-        return res.json({ success: true, answer });
-    } catch (err) {
-        console.error("Chat RAG Error:", err);
-        return res.status(500).json({ success: false, message: err.message || "Chat RAG failed" });
-    }
-};
-
-// ── Document RAG ──────────────────────────────────────────────────
-export const documentRAGController = async (req, res) => {
-    try {
-        const { docText, question } = req.body;
-        if (!docText?.trim() || !question?.trim()) return res.status(400).json({ success: false, message: "docText and question are required" });
-
-        const answer = await ragQuery(question, docText);
-        return res.json({ success: true, answer });
-    } catch (err) {
-        console.error("Document RAG Error:", err);
-        return res.status(500).json({ success: false, message: err.message || "Document RAG failed" });
-    }
-};
-
-// ── Semantic Search ───────────────────────────────────────────────
-export const semanticSearchController = async (req, res) => {
-    try {
-        const { withEmail, query } = req.body;
-        const userEmail = req.user.email;
-        if (!withEmail?.trim() || !query?.trim()) return res.status(400).json({ success: false, message: "withEmail and query are required" });
-
-        const history = await getChatHistory(userEmail, withEmail);
-        const indices = await semanticSearchMessages(query, history);
-        const results = indices.map(i => history[i]).filter(Boolean);
-        return res.json({ success: true, results });
-    } catch (err) {
-        console.error("Semantic Search Error:", err);
-        return res.status(500).json({ success: false, message: err.message || "Semantic search failed" });
-    }
-};
-
-// ── AI Sticker Generation ─────────────────────────────────────────
-export const generateStickerController = async (req, res) => {
-    try {
-        const { prompt, toChat } = req.body;
-        const userEmail = req.user.email;
-        if (!prompt?.trim()) return res.status(400).json({ success: false, message: "Prompt is required" });
-
-        const imageBuffer = await generateSticker(prompt);
-        const base64Image = `data:image/png;base64,${imageBuffer.toString("base64")}`;
-
-        if (!toChat || toChat === "ai@chatapp.com") {
-            await saveAIMessage({ userEmail, userMessage: `[Sticker] ${prompt}`, aiMessage: "", mediaUrl: base64Image, messageType: "image" });
-        }
-
-        return res.json({ success: true, imageUrl: base64Image });
-    } catch (err) {
-        console.error("Sticker Error:", err);
-        return res.status(500).json({ success: false, message: err.message || "Sticker generation failed" });
-    }
-};
-
-// ── AI Image Editing ──────────────────────────────────────────────
-export const editImageController = async (req, res) => {
-    try {
-        const { originalPrompt, editInstruction, toChat } = req.body;
-        const userEmail = req.user.email;
-        if (!originalPrompt?.trim() || !editInstruction?.trim()) return res.status(400).json({ success: false, message: "originalPrompt and editInstruction are required" });
-
-        const imageBuffer = await editImage(originalPrompt, editInstruction);
-        const base64Image = `data:image/png;base64,${imageBuffer.toString("base64")}`;
-
-        if (!toChat || toChat === "ai@chatapp.com") {
-            await saveAIMessage({ userEmail, userMessage: `[Edit] ${originalPrompt} → ${editInstruction}`, aiMessage: "", mediaUrl: base64Image, messageType: "image" });
-        }
-
-        return res.json({ success: true, imageUrl: base64Image });
     } catch (err) {
         console.error("Image Edit Error:", err);
-        return res.status(500).json({ success: false, message: err.message || "Image editing failed" });
+        return res.status(500).json({
+            success: false,
+            message: err.message || "Failed to edit image"
+        });
     }
 };
 
-// ── Task Extraction ───────────────────────────────────────────────
-export const extractTasksController = async (req, res) => {
+// ==========================================
+// 3. DOCUMENT RAG
+// ==========================================
+export const uploadDocumentRAG = async (req, res) => {
     try {
-        const { withEmail } = req.body;
         const userEmail = req.user.email;
-        if (!withEmail?.trim()) return res.status(400).json({ success: false, message: "withEmail is required" });
+        const { fileData, filename, text } = req.body;
 
-        const history = await getChatHistory(userEmail, withEmail);
-        if (!history.length) return res.json({ success: true, tasks: [] });
+        let buffer = null;
+        let originalName = filename || "document.txt";
 
-        const tasks = await extractTasksFromChat(history);
-        return res.json({ success: true, tasks });
+        if (fileData) {
+            // Base64 data URL or raw base64
+            const cleanBase64 = fileData.includes(",") ? fileData.split(",")[1] : fileData;
+            buffer = Buffer.from(cleanBase64, "base64");
+        } else if (text) {
+            buffer = Buffer.from(text, "utf8");
+        } else {
+            return res.status(400).json({
+                success: false,
+                message: "No document content provided (send fileData or text)"
+            });
+        }
+
+        const result = await indexDocument(userEmail, originalName, buffer);
+
+        return res.json({
+            success: true,
+            message: "Document indexed successfully",
+            document: result
+        });
+    } catch (err) {
+        console.error("Document RAG Upload Error:", err);
+        return res.status(500).json({
+            success: false,
+            message: err.message || "Failed to process document"
+        });
+    }
+};
+
+export const askDocumentRAG = async (req, res) => {
+    try {
+        const userEmail = req.user.email;
+        const { query } = req.body;
+
+        if (!query?.trim()) {
+            return res.status(400).json({
+                success: false,
+                message: "Question query is required"
+            });
+        }
+
+        const result = await queryDocumentRAG(userEmail, query.trim());
+
+        return res.json({
+            success: true,
+            answer: result.answer,
+            chunks: result.chunks
+        });
+    } catch (err) {
+        console.error("Document RAG Query Error:", err);
+        return res.status(500).json({
+            success: false,
+            message: describeAIError(err)
+        });
+    }
+};
+
+export const getDocumentStatus = async (req, res) => {
+    try {
+        const userEmail = req.user.email;
+        const status = getDocStatusService(userEmail);
+        return res.json({
+            success: true,
+            status
+        });
+    } catch (err) {
+        return res.status(500).json({ success: false, message: err.message });
+    }
+};
+
+export const clearDocumentIndex = async (req, res) => {
+    try {
+        const userEmail = req.user.email;
+        clearDocIndexService(userEmail);
+        return res.json({
+            success: true,
+            message: "Document index cleared"
+        });
+    } catch (err) {
+        return res.status(500).json({ success: false, message: err.message });
+    }
+};
+
+// ==========================================
+// 4. CHAT RAG
+// ==========================================
+export const chatRAG = async (req, res) => {
+    try {
+        const userEmail = req.user.email;
+        const { query, scope, targetEmail, groupId } = req.body;
+
+        if (!query?.trim()) {
+            return res.status(400).json({
+                success: false,
+                message: "Query is required"
+            });
+        }
+
+        const result = await queryChatRAG(
+            userEmail,
+            query.trim(),
+            scope || "current",
+            targetEmail || "",
+            groupId || ""
+        );
+
+        return res.json({
+            success: true,
+            answer: result.answer,
+            sources: result.sources
+        });
+    } catch (err) {
+        console.error("Chat RAG Error:", err);
+        return res.status(500).json({
+            success: false,
+            message: describeAIError(err)
+        });
+    }
+};
+
+// ==========================================
+// 5. SEMANTIC SEARCH
+// ==========================================
+export const semanticSearch = async (req, res) => {
+    try {
+        const userEmail = req.user.email;
+        const { query, scope, targetEmail, groupId } = req.body;
+
+        if (!query?.trim()) {
+            return res.json({
+                success: true,
+                results: []
+            });
+        }
+
+        const results = await searchSemantic(
+            userEmail,
+            query.trim(),
+            scope || "current",
+            targetEmail || "",
+            groupId || ""
+        );
+
+        return res.json({
+            success: true,
+            results
+        });
+    } catch (err) {
+        console.error("Semantic Search Error:", err);
+        return res.status(500).json({
+            success: false,
+            message: err.message || "Failed to perform semantic search"
+        });
+    }
+};
+
+// ==========================================
+// 6. TASK EXTRACTION
+// ==========================================
+export const extractTasks = async (req, res) => {
+    try {
+        const userEmail = req.user.email;
+        const { scope, targetEmail, groupId, source } = req.body;
+
+        const result = await extractTasksService(
+            userEmail,
+            scope || "current",
+            targetEmail || "",
+            groupId || "",
+            source || "chat"
+        );
+
+        return res.json({
+            success: true,
+            tasks: result.tasks,
+            sources: result.sources,
+            ...(result.note ? { note: result.note } : {})
+        });
     } catch (err) {
         console.error("Task Extraction Error:", err);
-        return res.status(500).json({ success: false, message: err.message || "Task extraction failed" });
+        return res.status(500).json({
+            success: false,
+            message: describeAIError(err)
+        });
     }
 };
-
-// ── Multi-Agent AI ────────────────────────────────────────────────
-export const multiAgentController = async (req, res) => {
-    try {
-        const { goal } = req.body;
-        if (!goal?.trim()) return res.status(400).json({ success: false, message: "Goal is required" });
-
-        const result = await multiAgentOrchestrate(goal);
-        return res.json({ success: true, ...result });
-    } catch (err) {
-        console.error("Multi-Agent Error:", err);
-        return res.status(500).json({ success: false, message: err.message || "Multi-agent task failed" });
-    }
-};

@@ -5,66 +5,13 @@ import LocationMessage from "./LocationMessage";
 import LiveLocationMessage from "./LiveLocationMessage";
 
 import MediaModal from './MediaModal';
-import { starMessage } from "../../services/api";
+import { starMessage, downloadMedia } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
 import ForwardModal from "../ForwardModal";
 
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Utility: parse markdown ``` code fences into segments for rendering
-// ──────────────────────────────────────────────────────────────────────────────
-function parseCodeBlocks(text) {
-    const segments = [];
-    const regex = /```([\w]*)\n?([\s\S]*?)```/g;
-    let lastIndex = 0;
-    let match;
-    while ((match = regex.exec(text)) !== null) {
-        if (match.index > lastIndex) {
-            segments.push({ type: "prose", content: text.slice(lastIndex, match.index) });
-        }
-        segments.push({ type: "code", lang: match[1] || "code", content: match[2] });
-        lastIndex = regex.lastIndex;
-    }
-    if (lastIndex < text.length) {
-        segments.push({ type: "prose", content: text.slice(lastIndex) });
-    }
-    return segments;
-}
 
-function CopyButton({ text }) {
-    const [copied, setCopied] = useState(false);
-    const handleCopy = () => {
-        navigator.clipboard.writeText(text).then(() => {
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
-        });
-    };
-    return (
-        <button
-            onClick={handleCopy}
-            title="Copy code"
-            style={{
-                position: "absolute",
-                top: "8px",
-                right: "8px",
-                background: copied ? "#25D366" : "#374151",
-                color: "white",
-                border: "none",
-                borderRadius: "6px",
-                padding: "3px 10px",
-                cursor: "pointer",
-                fontSize: "11px",
-                fontWeight: "600",
-                transition: "background 0.2s"
-            }}
-        >
-            {copied ? "✓ Copied" : "Copy"}
-        </button>
-    );
-}
-
-
-export default function Message({msg,currentUser,status,onReply,onEdit, onDeleteForMe,onDeleteForEveryone, onReact, searchText,setMessages,onForwardMessage, stopLiveLocation,}){
+export default function Message({msg,currentUser,selectedUser,status,onReply,onEdit, onDeleteForMe,onDeleteForEveryone, onReact, searchText,setMessages,onForwardMessage, stopLiveLocation,}){
 
     const [openMedia,setOpenMedia]=useState(null);
     const [showForward,setShowForward]=useState(false);
@@ -79,11 +26,34 @@ export default function Message({msg,currentUser,status,onReply,onEdit, onDelete
     const [reactionPopup, setReactionPopup] = useState(null);
 const [showReactionPopup, setShowReactionPopup] = useState(false);
     const {token}=useAuth();
+    const handleDownload = async () => {
+        try {
+            const blob = await downloadMedia(token, msg._id);
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = msg.fileName || "media";
+            link.click();
+            URL.revokeObjectURL(url);
+        } catch (error) {
+            window.alert(error.message);
+        }
+    };
 useEffect(()=>{
     const closeMenu=()=>{
         setShowMenu(false);
     };
-   
+    window.addEventListener("closeAllMenus", closeMenu);
+    const closeOnOutsideClick = (event) => {
+        if (!event.target.closest?.("[data-message-context-menu]")) {
+            setShowMenu(false);
+        }
+    };
+    document.addEventListener("click", closeOnOutsideClick);
+    return () => {
+        window.removeEventListener("closeAllMenus", closeMenu);
+        document.removeEventListener("click", closeOnOutsideClick);
+    };
 },[]);
 
     const isMe=msg.from===currentUser.email;
@@ -262,6 +232,10 @@ className={`message ${isMe ? "me" : "other"} ${
         <span style={{fontSize:"14px"}}>⭐</span>
     )}
 
+ {msg.isEncrypted && !msg._decryptError && (
+    <span title="Encrypted" style={{ marginRight: "4px", fontSize: "12px" }}>🔒</span>
+ )}
+
  {msg.deletedForEveryone ? (
 
     <span
@@ -275,7 +249,7 @@ className={`message ${isMe ? "me" : "other"} ${
 
 ) : (
 
-    (msg.messageType === "text" && !(msg.from === "ai@chatapp.com" && msg.message?.includes("```"))) && (
+    msg.messageType === "text" && (
 
         <span
             style={{
@@ -304,68 +278,10 @@ className={`message ${isMe ? "me" : "other"} ${
 
 )}
 
-{/* ── AI Coding Assistant reply — rendered with code blocks ── */}
-{!msg.deletedForEveryone && (msg.messageType === "code" || (msg.from === "ai@chatapp.com" && msg.message?.includes("```"))) && msg.message && (
-    <div style={{ maxWidth: "480px", width: "100%" }}>
-        {parseCodeBlocks(msg.message).map((seg, i) =>
-            seg.type === "code" ? (
-                <div key={i} style={{ position: "relative", margin: "10px 0" }}>
-                    <div style={{
-                        background: "#0d1117",
-                        borderRadius: "10px",
-                        overflow: "hidden",
-                        border: "1px solid #30363d"
-                    }}>
-                        <div style={{
-                            background: "#161b22",
-                            padding: "6px 14px",
-                            fontSize: "11px",
-                            color: "#8b949e",
-                            display: "flex",
-                            alignItems: "center",
-                            gap: "6px",
-                            fontFamily: "monospace",
-                            borderBottom: "1px solid #30363d"
-                        }}>
-                            <span style={{ color: "#58a6ff" }}>●</span>
-                            {seg.lang || "code"}
-                        </div>
-                        <pre style={{
-                            margin: 0,
-                            padding: "14px 16px",
-                            overflowX: "auto",
-                            fontFamily: "'Fira Code', 'Consolas', monospace",
-                            fontSize: "13px",
-                            lineHeight: "1.7",
-                            color: "#e6edf3",
-                            whiteSpace: "pre-wrap",
-                            wordBreak: "break-word"
-                        }}>
-                            <code>{seg.content}</code>
-                        </pre>
-                    </div>
-                    <CopyButton text={seg.content} />
-                </div>
-            ) : (
-                <p key={i} style={{
-                    margin: "6px 0",
-                    lineHeight: "1.6",
-                    fontSize: "14px",
-                    color: "inherit",
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-word"
-                }}>
-                    {seg.content}
-                </p>
-            )
-        )}
-    </div>
-)}
-
 </div>
 {!msg.deletedForEveryone && (
 
-    msg.messageType === "image" && msg.mediaUrl ? (
+    ((msg.messageType === "image" || msg.messageType === "media") && msg.mediaUrl && !msg.mediaUrl.startsWith("data:video")) ? (
 
         <img
             src={msg.mediaUrl}
@@ -377,18 +293,16 @@ className={`message ${isMe ? "me" : "other"} ${
                 display: "block",
                 marginTop: msg.message ? "8px" : "0"
             }}
-              onError={() => {
-        console.log( msg.mediaUrl);
-    }}
             onClick={() =>
                 setOpenMedia({
                     url: msg.mediaUrl,
                     type: "image"
                 })
             }
+            alt="media"
         />
 
-    ) : msg.messageType === "video" && msg.mediaUrl ? (
+    ) : ((msg.messageType === "video" || (msg.messageType === "media" && msg.mediaUrl?.startsWith("data:video"))) && msg.mediaUrl) ? (
 
         <video
             src={msg.mediaUrl}
@@ -403,11 +317,12 @@ className={`message ${isMe ? "me" : "other"} ${
             }}
         />
 
-    ) : msg.messageType === "voice" && msg.mediaUrl ? (
+    ) : (msg.messageType === "audio" || msg.messageType === "voice") && msg.mediaUrl ? (
 
         <VoiceMessage
             mediaUrl={msg.mediaUrl}
             isMe={isMe}
+            onDownload={handleDownload}
         />
 
     ) : msg.messageType === "location" ? (
@@ -433,11 +348,13 @@ className={`message ${isMe ? "me" : "other"} ${
 
 ) : msg.messageType === "document" && msg.mediaUrl ? (
 
-        <a
-            href={msg.mediaUrl}
-            download={msg.fileName}
-            target="_blank"
-            rel="noreferrer"
+        <button
+            onClick={() => {
+                setOpenMedia({
+                    url: msg.mediaUrl,
+                    type: msg.mediaUrl.startsWith("data:application/pdf") ? "pdf" : "document"
+                });
+            }}
             style={{
                 display: "flex",
                 alignItems: "center",
@@ -447,7 +364,9 @@ className={`message ${isMe ? "me" : "other"} ${
                 background: "#2a3942",
                 borderRadius: "8px",
                 color: "white",
-                textDecoration: "none"
+                border: 0,
+                cursor: "pointer",
+                textAlign: "left"
             }}
         >
             <span style={{ fontSize: "28px" }}>📄</span>
@@ -464,7 +383,7 @@ className={`message ${isMe ? "me" : "other"} ${
                     Click to open
                 </div>
             </div>
-        </a>
+        </button>
 
     ) : null
 
@@ -597,6 +516,8 @@ className={`message ${isMe ? "me" : "other"} ${
                 <MediaModal
                 mediaUrl={openMedia.url}
                 type={openMedia.type}
+                fileName={msg.fileName || "media"}
+                onDownload={handleDownload}
                 onClose={()=>setOpenMedia(null)}/>
 
 
@@ -719,6 +640,7 @@ className={`message ${isMe ? "me" : "other"} ${
 
     {/* Context Menu */}
     <div
+        data-message-context-menu="true"
         style={{
             position:"fixed",
             left:menuPos.x,
@@ -738,6 +660,7 @@ className={`message ${isMe ? "me" : "other"} ${
                 onReply(msg);
                 setShowMenu(false);
             }}
+            data-message-context-menu="true"
             style={{
                 padding:"12px 18px",
                 cursor:"pointer",
@@ -916,7 +839,7 @@ document.body
 }
 {showForward && (
     <ForwardModal
-    
+    currentChatUser={selectedUser}
     onClose={()=>setShowForward(false)}
     onForward={(user)=>{
         onForwardMessage(user,msg);

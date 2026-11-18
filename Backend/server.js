@@ -12,26 +12,39 @@ import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import rateLimit from "express-rate-limit";
 import ArchivedChat from "./models/ArchivedChat.js";
-import Backup from "./models/Backup.js";
 
 import Group from "./models/Group.js";
 import DeletedMessage from "./models/DeletedMessage.js";
+import Device from "./models/Device.js";
 
 import registerCallSocket from "./sockets/callSocket.js";
 
 import aiRoutes from "./ai/routes/aiRoutes.js";
 
 
+// Load environment variables from .env file
+// Resolve relative to this file so the server finds Backend/.env
+// regardless of the directory it was started from (e.g. `npm start` from repo root)
+import dotenv from 'dotenv';
+dotenv.config({ path: path.join(path.dirname(fileURLToPath(import.meta.url)), '.env') });
+
+import { OAuth2Client } from 'google-auth-library';
+
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Load environment variables from .env file
-import dotenv from 'dotenv';
-dotenv.config({ path: path.join(__dirname, '.env') });
-dotenv.config();
-
 import Message from './models/Message.js';
 import BlockedUser from './models/BlockedUser.js';
+import Report from './models/Report.js';
+import Backup from './models/Backup.js';
+import {
+    BACKUP_VERSION,
+    decryptBackup,
+    downloadBackup,
+    encryptBackup,
+    uploadBackup
+} from './services/backupStorage.js';
 
 const app = express();
 app.use(cors());
@@ -42,13 +55,15 @@ app.use(express.static(path.join(__dirname, '../Frontend')));
 // Serve the root folder as well so images like 'discordimg.jpg' are accessible
 app.use(express.static(path.join(__dirname, '../')));
 
-mongoose.connect("mongodb://127.0.0.1:27017/chatapp")
+const MONGO_URI = process.env.MONGO_URI || "mongodb://127.0.0.1:27017/chatapp";
+
+mongoose.connect(MONGO_URI)
      .then(async () => {
-        console.log("DB connected");
+        console.log("DB connected successfully to:", MONGO_URI.startsWith("mongodb+srv") ? "MongoDB Atlas (Cloud)" : MONGO_URI);
 
         await createAIUser();
     })
-    .catch(err => console.log(err));
+    .catch(err => console.log("MongoDB Connection Error:", err.message));
 
 const server = http.createServer(app);
 const io = new Server(server, {// attach to existng server
@@ -69,10 +84,11 @@ const sanitizeUser = (userDoc) => {
     return {
         name: userDoc.name,
         email: userDoc.email,
+        phone: userDoc.phone || "",
+        about: userDoc.about || "",
         photo: userDoc.photo || "",
         isOnline: !!userDoc.isOnline,
-        lastSeen: userDoc.lastSeen || null,
-        publicKey: userDoc.publicKey || ""
+        lastSeen: userDoc.lastSeen || null
     };
 };
 import CallHistory from "./models/CallHistory.js";
@@ -101,13 +117,209 @@ const serializeMessage = (messageDoc) => {
         clientMessageId: String(messageDoc.clientMessageId || ""),
             status: String(messageDoc.status || "offline"),
         starred: !!messageDoc.starred,
-        forwarded: !!messageDoc.forwarded
+        forwarded: !!messageDoc.forwarded,
+        edited: !!messageDoc.edited,
+        fileName: String(messageDoc.fileName || ""),
+        deletedForEveryone: !!messageDoc.deletedForEveryone,
+        reactions: Array.isArray(messageDoc.reactions) ? messageDoc.reactions : [],
+        isEncrypted: !!messageDoc.isEncrypted,
+        encryptionVersion: messageDoc.encryptionVersion || 1,
+        ciphertext: String(messageDoc.ciphertext || ""),
+        ciphertextType: messageDoc.ciphertextType || 0,
+        senderDeviceId: messageDoc.senderDeviceId ?? null,
+        recipientDeviceId: messageDoc.recipientDeviceId ?? null,
+        encryptedPayload: messageDoc.encryptedPayload || null
     };
 };
 
+    const backupMessageFields = (message) => ({
+        from: message.from,
+        to: message.to,
+        message: message.message || "",
+        replyTo: message.replyTo ? String(message.replyTo) : null,
+        replyText: message.replyText || "",
+        replySender: message.replySender || "",
+        messageType: message.messageType || "text",
+        latitude: message.latitude ?? null,
+        longitude: message.longitude ?? null,
+        locationName: message.locationName || "",
+        isLive: !!message.isLive,
+        liveLocationId: message.liveLocationId || "",
+        expiresAt: message.expiresAt || null,
+        mediaUrl: message.mediaUrl || "",
+        fileName: message.fileName || "",
+        clientMessageId: message.clientMessageId || "",
+        starred: !!message.starred,
+        edited: !!message.edited,
+        forwarded: !!message.forwarded,
+        reactions: Array.isArray(message.reactions) ? message.reactions : [],
+        deletedForEveryone: !!message.deletedForEveryone,
+        createdAt: message.createdAt
+    });
+
+    const mediaMessageTypes = new Set(["image", "media", "video", "document", "voice"]);
+    const isMediaMessage = (message) => mediaMessageTypes.has(message.messageType) || Boolean(message.mediaUrl);
+
+    const collectBackupData = async (owner, { withUser, groupId, includeMedia, settings = {} } = {}) => {
+        const groups = await Group.find({ members: owner }).select("_id name members admin photo").lean();
+        const groupIds = groups.map(group => String(group._id));
+        const target = withUser ? normalizeEmail(withUser) : null;
+        let query;
+        if (groupId) {
+            if (!groupIds.includes(String(groupId))) throw new Error("You are not a member of this group");
+            query = { to: String(groupId) };
+        } else if (target) {
+            query = { $or: [{ from: owner, to: target }, { from: target, to: owner }] };
+        } else {
+            query = {
+                $or: [
+                    { from: owner },
+                    { to: owner },
+                    ...(groupIds.length ? [{ to: { $in: groupIds } }] : [])
+                ]
+            };
+        }
+        const messages = await Message.find(query).sort({ createdAt: 1 }).lean();
+        const normalizedMessages = messages
+            .filter(message => message.from === owner || message.to === owner || groupIds.includes(String(message.to)))
+            .map(message => {
+                const backedUp = backupMessageFields(message);
+                if (!includeMedia) {
+                    backedUp.mediaUrl = "";
+                    backedUp.fileName = "";
+                }
+                return backedUp;
+            });
+        const conversations = [
+            ...groups.map(group => ({
+                type: "group",
+                id: String(group._id),
+                name: group.name,
+                members: group.members,
+                admin: group.admin,
+                photo: group.photo || ""
+            })),
+            ...[...new Set(normalizedMessages
+                .filter(message => !groupIds.includes(String(message.to)))
+                .map(message => message.from === owner ? message.to : message.from))]
+                .map(email => ({ type: "private", id: email }))
+        ];
+        const media = includeMedia
+            ? normalizedMessages
+                .filter(isMediaMessage)
+                .map(message => ({
+                    clientMessageId: message.clientMessageId,
+                    messageType: message.messageType,
+                    fileName: message.fileName,
+                    mediaUrl: message.mediaUrl
+                }))
+            : [];
+        return {
+            format: "chatapp-backup",
+            version: BACKUP_VERSION,
+            createdAt: new Date().toISOString(),
+            owner,
+            conversations,
+            messages: normalizedMessages,
+            media,
+            settings: {
+                theme: settings.theme === "light" ? "light" : "dark",
+                includeMedia: !!includeMedia
+            }
+        };
+    };
+
+    const restoreBackupData = async (owner, payload) => {
+        if (!payload || payload.format !== "chatapp-backup" || payload.version !== BACKUP_VERSION) {
+            throw new Error("Unsupported backup version or format");
+        }
+        const groups = await Group.find({ members: owner }).select("_id members").lean();
+        const groupIds = new Set(groups.map(group => String(group._id)));
+        const messages = Array.isArray(payload.messages) ? payload.messages : [];
+        let insertedCount = 0;
+        let skippedCount = 0;
+        for (const message of messages) {
+            const from = normalizeEmail(message.from);
+            const to = String(message.to || "");
+            const allowed = from === owner || to === owner || groupIds.has(to);
+            if (!allowed || !from || !to || (!message.message && !message.mediaUrl)) {
+                skippedCount++;
+                continue;
+            }
+            const duplicate = await Message.exists({
+                from,
+                to,
+                createdAt: new Date(message.createdAt),
+                message: message.message || "",
+                clientMessageId: message.clientMessageId || ""
+            });
+            if (duplicate) {
+                skippedCount++;
+                continue;
+            }
+            await Message.create({
+                from,
+                to,
+                message: message.message || "",
+                replyText: message.replyText || "",
+                replySender: message.replySender || "",
+                messageType: message.messageType || "text",
+                latitude: message.latitude ?? null,
+                longitude: message.longitude ?? null,
+                locationName: message.locationName || "",
+                isLive: !!message.isLive,
+                liveLocationId: message.liveLocationId || "",
+                expiresAt: message.expiresAt || null,
+                mediaUrl: message.mediaUrl || "",
+                fileName: message.fileName || "",
+                clientMessageId: message.clientMessageId || "",
+                starred: !!message.starred,
+                edited: !!message.edited,
+                forwarded: !!message.forwarded,
+                reactions: Array.isArray(message.reactions) ? message.reactions : [],
+                deletedForEveryone: !!message.deletedForEveryone,
+                createdAt: new Date(message.createdAt)
+            });
+            insertedCount++;
+        }
+        return {
+            insertedCount,
+            skippedCount,
+            total: messages.length,
+            settings: payload.settings || {}
+        };
+    };
+
 const isStrongPassword = (password) => {
     if (typeof password !== "string") return false;
-    return /^\d{8,}$/.test(password);
+    return password.length >= 8;
+};
+
+const isBase64Key = (value, maxLength = 4096) =>
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= maxLength &&
+    /^[A-Za-z0-9+/]+={0,2}$/.test(value);
+
+const publicDeviceBundle = (device) => ({
+    ownerEmail: device.ownerEmail,
+    deviceId: device.deviceId,
+    registrationId: device.registrationId,
+    identityKey: device.identityKey,
+    signedPreKey: device.signedPreKey,
+    oneTimePreKeys: device.oneTimePreKeys,
+    kyberPreKey: device.kyberPreKey || null
+});
+
+const claimOneTimePreKey = async (ownerEmail, deviceId) => {
+    const device = await Device.findOne({ ownerEmail, deviceId, revokedAt: null });
+    if (!device) return null;
+    const preKey = Array.isArray(device.oneTimePreKeys) && device.oneTimePreKeys.length ? device.oneTimePreKeys[0] : null;
+    if (preKey) {
+        device.oneTimePreKeys = device.oneTimePreKeys.slice(1);
+        await device.save();
+    }
+    return { bundle: publicDeviceBundle(device), preKey };
 };
 
 const requireAuth = (req, res, next) => {
@@ -133,6 +345,116 @@ const requireAuth = (req, res, next) => {
         return res.status(401).json({ error: "Invalid or expired token" });
     }
 };
+
+app.post("/e2ee/devices", requireAuth, async (req, res) => {
+    try {
+        const {
+            deviceId,
+            registrationId,
+            identityKey,
+            signedPreKey,
+            oneTimePreKeys,
+            kyberPreKey
+        } = req.body || {};
+
+        const validKyber = kyberPreKey == null || (
+            Number.isInteger(kyberPreKey.id) &&
+            isBase64Key(kyberPreKey.publicKey) &&
+            isBase64Key(kyberPreKey.signature)
+        );
+
+        if (!Number.isInteger(deviceId) || deviceId < 1 || deviceId > 255 ||
+            !Number.isInteger(registrationId) || registrationId < 1 || registrationId > 16380 ||
+            !isBase64Key(identityKey) ||
+            !signedPreKey || !Number.isInteger(signedPreKey.id) ||
+            !isBase64Key(signedPreKey.publicKey) ||
+            !isBase64Key(signedPreKey.signature) ||
+            !Array.isArray(oneTimePreKeys) ||
+            oneTimePreKeys.length > 100 ||
+            oneTimePreKeys.some((key) =>
+                !Number.isInteger(key?.id) || !isBase64Key(key?.publicKey)
+            ) || !validKyber) {
+            return res.status(400).json({ message: "Invalid device key bundle" });
+        }
+
+        const device = await Device.findOneAndUpdate(
+            { ownerEmail: req.user.email, deviceId },
+            {
+                ownerEmail: req.user.email,
+                deviceId,
+                registrationId,
+                identityKey,
+                signedPreKey: {
+                    id: signedPreKey.id,
+                    publicKey: signedPreKey.publicKey,
+                    signature: signedPreKey.signature,
+                    createdAt: new Date()
+                },
+                oneTimePreKeys: oneTimePreKeys.map((key) => ({
+                    id: key.id,
+                    publicKey: key.publicKey
+                })),
+                kyberPreKey: kyberPreKey ? {
+                    id: kyberPreKey.id,
+                    publicKey: kyberPreKey.publicKey,
+                    signature: kyberPreKey.signature,
+                    createdAt: new Date()
+                } : undefined,
+                revokedAt: null
+            },
+            { upsert: true, new: true, runValidators: true }
+        ).lean();
+
+        return res.status(200).json({ device: publicDeviceBundle(device) });
+    } catch (error) {
+        console.error("Failed to register E2EE device:", error);
+        return res.status(500).json({ message: "Failed to register E2EE device" });
+    }
+});
+
+app.get("/e2ee/devices/:email", requireAuth, async (req, res) => {
+    try {
+        const ownerEmail = normalizeEmail(req.params.email);
+        const claim = req.query.claim === "1" || req.query.claim === "true";
+        if (!ownerEmail) return res.status(400).json({ message: "Email is required" });
+
+        const devices = await Device.find({ ownerEmail, revokedAt: null })
+            .select("-_id ownerEmail deviceId registrationId identityKey signedPreKey oneTimePreKeys kyberPreKey")
+            .lean();
+        if (!claim) return res.json({ devices: devices.map(publicDeviceBundle) });
+
+        // claim one-time prekey from first active device for session setup
+        const active = devices[0];
+        if (!active) return res.json({ devices: [] });
+        const claimed = await claimOneTimePreKey(ownerEmail, active.deviceId);
+        const b = claimed?.bundle;
+        if (b && claimed.preKey) b.preKey = claimed.preKey;
+        return res.json({ devices: b ? [b] : [] });
+    } catch (error) {
+        console.error("Failed to load E2EE devices:", error);
+        return res.status(500).json({ message: "Failed to load E2EE devices" });
+    }
+});
+
+app.delete("/e2ee/devices/:deviceId", requireAuth, async (req, res) => {
+    try {
+        const deviceId = Number(req.params.deviceId);
+        if (!Number.isInteger(deviceId)) {
+            return res.status(400).json({ message: "Invalid device ID" });
+        }
+
+        const device = await Device.findOneAndUpdate(
+            { ownerEmail: req.user.email, deviceId, revokedAt: null },
+            { revokedAt: new Date() },
+            { new: true }
+        ).lean();
+        if (!device) return res.status(404).json({ message: "Device not found" });
+        return res.json({ deviceId, revoked: true });
+    } catch (error) {
+        console.error("Failed to revoke E2EE device:", error);
+        return res.status(500).json({ message: "Failed to revoke E2EE device" });
+    }
+});
 
 const users = {};
 const getOnlineEmails = () => {
@@ -281,7 +603,8 @@ io.on("connection", (socket) => {
     socket.on("privateMessage", async ({ to, message = "", messageType = "text", mediaUrl = "", fileName = "", clientMessageId = "",replyTo=null,replyText="",replySender="" ,forwarded=false,latitude = null,longitude = null,locationName = "",
     isLive = false,
     liveLocationId = "",
-    expiresAt = null}) => {
+    expiresAt = null,
+    isEncrypted = false, ciphertext = "", ciphertextType = 0, senderDeviceId = null, recipientDeviceId = null, encryptedPayload = null, encryptionVersion = 1 }) => {
 
         console.log("PRIVATE LOCATION:", {
     messageType,
@@ -292,7 +615,7 @@ io.on("connection", (socket) => {
         const from = users[socket.id];
         const targetEmail = normalizeEmail(to);
         const senderEmail = normalizeEmail(from?.email);
-        const allowedMsgTypes = ["text", "image", "video", "document","voice","location"];
+        const allowedMsgTypes = ["text", "image", "video", "document","audio","voice","location"];
         const safeMessageType = allowedMsgTypes.includes(messageType) ? messageType : "text";
         const text = String(message || "").trim();
         const media = String(mediaUrl || "");
@@ -321,27 +644,22 @@ io.on("connection", (socket) => {
             return;
         }
 
-        if (safeMessageType === "text" && !text) {
-            socket.emit("messageStatus", {
-                ok: false,
-                message: "Message cannot be empty"
-            });
-            return;
+        const enc = Boolean(isEncrypted && ciphertext);
+        if (!enc) {
+            if (safeMessageType === "text" && !text) {
+                socket.emit("messageStatus", { ok: false, message: "Message cannot be empty" });
+                return;
+            }
+            if ((safeMessageType === "image" || safeMessageType === "video" || safeMessageType === "document" || safeMessageType === "audio" || safeMessageType === "voice") && !media) {
+                socket.emit("messageStatus", { ok: false, message: "Media payload missing" });
+                return;
+            }
+        } else {
+            if (typeof ciphertext !== "string" || !ciphertext.trim()) {
+                socket.emit("messageStatus", { ok: false, message: "Encrypted payload missing" });
+                return;
+            }
         }
-
-    if (
-    (safeMessageType === "image" ||
-     safeMessageType === "video" ||
-     safeMessageType === "document" ||
-     safeMessageType === "voice") &&
-    !media
-) {
-    socket.emit("messageStatus", {
-        ok: false,
-        message: "Media payload missing"
-    });
-    return;
-}
 
         // Check if sender is blocked by receiver
         const isBlocked = await BlockedUser.findOne({
@@ -377,55 +695,41 @@ io.on("connection", (socket) => {
             const savedMessage = await Message.create({
                 from: senderEmail,
                 to: targetEmail,
-                message: text,
+                message: enc ? "" : text,
 
                 replyTo,
-                replyText,
-                replySender,
+                replyText: enc ? "" : replyText,
+                replySender: enc ? "" : replySender,
               
-                messageType: safeMessageType,
-                mediaUrl: media,
-                fileName,
-                latitude,
-                longitude,
-                locationName,
-                isLive,
-                liveLocationId,
-                expiresAt,
+                messageType: enc ? "encrypted" : safeMessageType,
+                mediaUrl: enc ? "" : media,
+                fileName: enc ? "" : fileName,
+                latitude: enc ? null : latitude,
+                longitude: enc ? null : longitude,
+                locationName: enc ? "" : locationName,
+                isLive: enc ? false : isLive,
+                liveLocationId: enc ? "" : liveLocationId,
+                expiresAt: enc ? null : expiresAt,
                 clientMessageId: String(clientMessageId || ""),
                 status: deliveryStatus,
 
-                forwarded
+                forwarded,
+                isEncrypted: enc,
+                encryptionVersion: enc ? (Number(encryptionVersion) || 1) : 1,
+                ciphertext: enc ? String(ciphertext) : "",
+                ciphertextType: enc ? Number(ciphertextType) || 0 : 0,
+                senderDeviceId: enc ? (senderDeviceId ?? null) : null,
+                recipientDeviceId: enc ? (recipientDeviceId ?? null) : null,
+                encryptedPayload: enc ? (encryptedPayload || null) : null
             });
 
             const savedDoc = serializeMessage(savedMessage);
 
             const payload = {
-                _id: savedDoc._id,
+                ...savedDoc,
                 user: from.name || from.email,
                 fromEmail: savedDoc.from,
-                toEmail: savedDoc.to,
-                message: savedDoc.message,
-
-                 replyTo: savedDoc.replyTo,
-                 replyText: savedDoc.replyText,
-                replySender: savedDoc.replySender,
-
-                messageType: savedDoc.messageType,
-                mediaUrl: savedDoc.mediaUrl,
-                fileName: savedDoc.fileName,
-                createdAt: savedDoc.createdAt,
-                clientMessageId: savedDoc.clientMessageId,
-                status: savedDoc.status,
-                starred: savedDoc.starred,
-                forwarded: savedDoc.forwarded,
-
-                latitude: savedDoc.latitude,
-                longitude: savedDoc.longitude,
-                locationName: savedDoc.locationName,
-                isLive: savedDoc.isLive,
-                liveLocationId: savedDoc.liveLocationId,
-                expiresAt: savedDoc.expiresAt,
+                toEmail: savedDoc.to
             };
 
             const senderSockets = Object.keys(users).filter(
@@ -627,7 +931,8 @@ io.on("connection", (socket) => {
     locationName = "",
     isLive = false,
     liveLocationId = "",
-    expiresAt = null})=>{
+    expiresAt = null,
+    isEncrypted = false, ciphertext = "", ciphertextType = 0, senderDeviceId = null, encryptedPayload = null, encryptionVersion = 1 })=>{
 
         console.log("GROUP LOCATION:", {
     messageType,
@@ -640,7 +945,14 @@ io.on("connection", (socket) => {
             if(!group) return;
 
             const sender=socket.user.email;
-            const allowedTypes = ["text", "image", "video", "document","voice","location"];
+            if (!group.members.includes(sender)) {
+                socket.emit("messageStatus", {
+                    ok: false,
+                    message: "You are not a member of this group"
+                });
+                return;
+            }
+            const allowedTypes = ["text", "image", "video", "document","audio","voice","location"];
 
             const safeMessageType = allowedTypes.includes(messageType)
             ? messageType
@@ -648,44 +960,46 @@ io.on("connection", (socket) => {
 
             const media = String(mediaUrl || "");
 
-                        if (
-                     (
-               safeMessageType === "image" ||
-                 safeMessageType === "video" ||
-             safeMessageType === "document" ||
-              safeMessageType === "voice"
-             ) &&
-             !media
-            ) {
-           socket.emit("messageStatus", {
-             ok: false,
-             message: "Media payload missing"
-             });
-             return;
+            const enc = Boolean(isEncrypted && ciphertext);
+            if (!enc) {
+                if ((safeMessageType === "image" || safeMessageType === "video" || safeMessageType === "document" || safeMessageType === "audio" || safeMessageType === "voice") && !media) {
+                    socket.emit("messageStatus", { ok: false, message: "Media payload missing" });
+                    return;
+                }
+            } else if (typeof ciphertext !== "string" || !ciphertext.trim()) {
+                socket.emit("messageStatus", { ok: false, message: "Encrypted payload missing" });
+                return;
             }
 
             const saved=await Message.create({
                 from:sender,
                 to:groupId,
-                message,
-                messageType:safeMessageType,
-                mediaUrl,
-                fileName,
+                message: enc ? "" : message,
+                messageType: enc ? "encrypted" : safeMessageType,
+                mediaUrl: enc ? "" : mediaUrl,
+                fileName: enc ? "" : fileName,
                 forwarded,
                 replyTo,
-                replyText,
-                replySender,
+                replyText: enc ? "" : replyText,
+                replySender: enc ? "" : replySender,
 
-                latitude,
-                longitude,
-                locationName,
-                isLive,
-                liveLocationId,
-                expiresAt,
+                latitude: enc ? null : latitude,
+                longitude: enc ? null : longitude,
+                locationName: enc ? "" : locationName,
+                isLive: enc ? false : isLive,
+                liveLocationId: enc ? "" : liveLocationId,
+                expiresAt: enc ? null : expiresAt,
+
+                isEncrypted: enc,
+                encryptionVersion: enc ? (Number(encryptionVersion) || 1) : 1,
+                ciphertext: enc ? String(ciphertext) : "",
+                ciphertextType: enc ? Number(ciphertextType) || 0 : 0,
+                senderDeviceId: enc ? (senderDeviceId ?? null) : null,
+                encryptedPayload: enc ? (encryptedPayload || null) : null
             });
 
             const payload={
-                ...saved.toObject(),
+                ...serializeMessage(saved),
                 groupId
             };
 
@@ -1281,6 +1595,25 @@ if (group) {
             console.error("Edit message error:",err);
         }
     });
+    socket.on("groupSenderKeyDistribution", async ({ groupId, distributionId, distributionMessage, senderDeviceId }) => {
+        try {
+            const group = await Group.findById(groupId);
+            if (!group || !group.members.includes(socket.user.email)) return;
+            group.members.forEach(member => {
+                const sockets = Object.keys(users).filter(id => users[id]?.email === member);
+                sockets.forEach(id => {
+                    io.to(id).emit("groupSenderKeyDistribution", {
+                        groupId,
+                        from: socket.user.email,
+                        senderDeviceId: senderDeviceId || null,
+                        distributionId,
+                        distributionMessage
+                    });
+                });
+            });
+        } catch (e) { console.error("groupSenderKeyDistribution error", e); }
+    });
+
     registerCallSocket(
     io,
     socket,
@@ -1399,6 +1732,7 @@ const messages = await Message.find({
 
         messageType: msg.messageType,
         mediaUrl: msg.mediaUrl,
+        fileName: msg.fileName,
 
 
         latitude: msg.latitude,
@@ -1431,7 +1765,7 @@ app.post("/messages", (req, res, next) => {
 }, requireAuth, async (req, res) => {
     const senderEmail = req.user.email;
     const targetEmail = normalizeEmail(req.body?.to);
-const allowedTypes = ["text", "image", "video", "document"];
+const allowedTypes = ["text", "image", "video", "document", "audio", "voice"];
 
 const safeMessageType = allowedTypes.includes(req.body?.messageType)
     ? req.body.messageType
@@ -1540,7 +1874,7 @@ const safeMessageType = allowedTypes.includes(req.body?.messageType)
 });
 
 app.post("/signup", async (req, res) => {
-    const { name, email, password,publicKey} = req.body;
+    const { name, email, password } = req.body;
     try {
         const safeName = String(name || "").trim();
         const safeEmail = normalizeEmail(email);
@@ -1562,17 +1896,11 @@ app.post("/signup", async (req, res) => {
         if (existingUser) {
             return res.json({ message: "User already exists" });
         }
-        if (!publicKey) {
-    return res.status(400).json({
-        message: "Public key is required"
-    });
-}
         const hashedPassword=await bcrypt.hash(password,10);
         const newUser = new User({
             name: safeName,
             email: safeEmail,
             password: hashedPassword,
-            publicKey,
             isOnline: false,
             lastSeen: null
         });
@@ -1599,6 +1927,11 @@ app.post("/login", loginLimiter, async (req, res) => {
             return res.json({
                 message: "Account locked. Try later."
             });
+        }
+
+        if (!user.password) {
+            logLoginAttempt(safeEmail, false, ip);
+            return res.json({ message: "Invalid credentials" });
         }
 
         const isMatch = await bcrypt.compare(password, user.password);
@@ -1635,6 +1968,118 @@ app.post("/login", loginLimiter, async (req, res) => {
         res.json({ message: "Login successful", user: sanitizeUser(user), token: token });
     } catch (err) {
         res.status(500).json({ error: err.message });
+    }
+});
+
+app.post("/auth/google", async (req, res) => {
+    try {
+        const { credential, accessToken, code } = req.body || {};
+        const clientId = process.env.GOOGLE_CLIENT_ID;
+        const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+        if (!clientId) {
+            return res.status(500).json({ message: "Google client ID not configured" });
+        }
+
+        let email = "";
+        let name = "";
+        let picture = "";
+        let sub = "";
+
+        if (credential && typeof credential === "string") {
+            // Verify ID Token using google-auth-library
+            const googleClient = new OAuth2Client(clientId);
+            try {
+                const ticket = await googleClient.verifyIdToken({
+                    idToken: credential,
+                    audience: clientId
+                });
+                const payload = ticket.getPayload();
+                if (!payload) return res.status(401).json({ message: "Invalid Google token" });
+                const emailVerified = payload.email_verified === true || payload.email_verified === "true";
+                if (!payload.email || !emailVerified) {
+                    return res.status(401).json({ message: "Google email not verified" });
+                }
+                email = normalizeEmail(payload.email);
+                name = String(payload.name || email.split("@")[0] || "User").trim().slice(0, 80);
+                picture = typeof payload.picture === "string" ? payload.picture : "";
+                sub = String(payload.sub || "");
+            } catch (verifyErr) {
+                console.error("Google token verification failed:", verifyErr.message);
+                return res.status(401).json({ message: "Invalid Google token" });
+            }
+        } else if (accessToken && typeof accessToken === "string") {
+            // Verify access token & fetch user profile from Google's userinfo endpoint
+            const userInfoRes = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+                headers: { Authorization: `Bearer ${accessToken}` }
+            });
+            if (!userInfoRes.ok) {
+                return res.status(401).json({ message: "Failed to fetch Google user profile" });
+            }
+            const userInfo = await userInfoRes.json();
+            const emailVerified = userInfo.email_verified === true || userInfo.email_verified === "true";
+            if (!userInfo.email || !emailVerified) {
+                return res.status(401).json({ message: "Google email not verified" });
+            }
+            email = normalizeEmail(userInfo.email);
+            name = String(userInfo.name || email.split("@")[0] || "User").trim().slice(0, 80);
+            picture = typeof userInfo.picture === "string" ? userInfo.picture : "";
+            sub = String(userInfo.sub || "");
+        } else if (code && typeof code === "string") {
+            const oauth2Client = new OAuth2Client(clientId, clientSecret, "postmessage");
+            const { tokens } = await oauth2Client.getToken(code);
+            oauth2Client.setCredentials(tokens);
+            const userInfoRes = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+                headers: { Authorization: `Bearer ${tokens.access_token}` }
+            });
+            if (!userInfoRes.ok) {
+                return res.status(401).json({ message: "Failed to fetch Google user profile" });
+            }
+            const userInfo = await userInfoRes.json();
+            const emailVerified = userInfo.email_verified === true || userInfo.email_verified === "true";
+            if (!userInfo.email || !emailVerified) {
+                return res.status(401).json({ message: "Google email not verified" });
+            }
+            email = normalizeEmail(userInfo.email);
+            name = String(userInfo.name || email.split("@")[0] || "User").trim().slice(0, 80);
+            picture = typeof userInfo.picture === "string" ? userInfo.picture : "";
+            sub = String(userInfo.sub || "");
+        } else {
+            return res.status(400).json({ message: "Missing Google credential or access token" });
+        }
+
+        let user = await User.findOne({ email });
+        if (!user) {
+            const randomPassword = crypto.randomBytes(24).toString("hex");
+            user = await User.create({
+                name,
+                email,
+                password: await bcrypt.hash(randomPassword, 10),
+                photo: picture,
+                googleId: sub,
+                authProvider: "google",
+                isOnline: true,
+                lastSeen: null
+            });
+        } else {
+            const updates = { isOnline: true, lastSeen: null };
+            if (!user.googleId && sub) updates.googleId = sub;
+            if (!user.photo && picture) updates.photo = picture;
+            if (user.googleId) updates.authProvider = "google";
+            user = await User.findOneAndUpdate({ email }, { $set: updates }, { new: true });
+        }
+
+        if (!jwtSecret) {
+            return res.status(500).json({ error: "JWT secret not set" });
+        }
+        const token = jwt.sign(
+            { email: user.email, name: user.name },
+            jwtSecret,
+            { expiresIn: "7d" }
+        );
+        return res.json({ message: "Login successful", user: sanitizeUser(user), token });
+    } catch (err) {
+        console.error("Google auth error:", err);
+        return res.status(500).json({ message: "Google authentication failed" });
     }
 });
 app.post("/forgot-password",async(req,res)=>{
@@ -1683,8 +2128,13 @@ app.post("/reset-password",async(req,res)=>{
 app.post("/profile/photo", requireAuth, async (req, res) => {
     try {
         const photoData = String(req.body?.photoData || "");
-        if (!photoData.startsWith("data:image/")) {
-            return res.status(400).json({ message: "Invalid image data" });
+        const imageMatch = photoData.match(/^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/);
+        if (!imageMatch) {
+            return res.status(400).json({ message: "Only JPG, PNG, and WebP images are supported" });
+        }
+        const imageBytes = Buffer.from(imageMatch[2], "base64");
+        if (imageBytes.length > 5 * 1024 * 1024) {
+            return res.status(413).json({ message: "Profile photos must be smaller than 5 MB" });
         }
 
         const updated = await User.findOneAndUpdate(
@@ -1701,17 +2151,361 @@ app.post("/profile/photo", requireAuth, async (req, res) => {
         res.status(500).json({ message: "Failed to update profile photo" });
     }
 });
+
+const deletePhotoHandler = async (req, res) => {
+    try {
+        const updated = await User.findOneAndUpdate(
+            { email: req.user.email },
+            { $set: { photo: "" } },
+            { new: true }
+        );
+        io.emit("profilePhotoUpdated", {
+            email: updated.email,
+            photo: ""
+        });
+        res.json({ message: "Profile photo deleted", user: sanitizeUser(updated) });
+    } catch (err) {
+        res.status(500).json({ message: "Failed to delete profile photo" });
+    }
+};
+
+app.delete("/profile/photo", requireAuth, deletePhotoHandler);
+app.post("/profile/photo/delete", requireAuth, deletePhotoHandler);
+
+// Profile Update (Name, About, Phone)
+const updateProfileHandler = async (req, res) => {
+    try {
+        const { name, about, phone } = req.body;
+        const updates = {};
+
+        if (typeof name === "string") {
+            const trimmedName = name.trim();
+            if (trimmedName.length < 2) {
+                return res.status(400).json({ message: "Name must be at least 2 characters" });
+            }
+            updates.name = trimmedName;
+        }
+
+        if (typeof about === "string") {
+            updates.about = about.trim();
+        }
+
+        if (typeof phone === "string") {
+            updates.phone = phone.trim();
+        }
+
+        const updated = await User.findOneAndUpdate(
+            { email: req.user.email },
+            { $set: updates },
+            { new: true }
+        );
+
+        res.json({ message: "Profile updated successfully", user: sanitizeUser(updated) });
+    } catch (err) {
+        res.status(500).json({ message: "Failed to update profile" });
+    }
+};
+
+app.post("/profile/update", requireAuth, updateProfileHandler);
+app.put("/profile", requireAuth, updateProfileHandler);
+app.post("/profile/name", requireAuth, updateProfileHandler);
+app.post("/profile/about", requireAuth, updateProfileHandler);
+app.post("/profile/phone", requireAuth, updateProfileHandler);
+
+// Mutual Groups
+app.get("/mutual-groups", requireAuth, async (req, res) => {
+    try {
+        const me = req.user.email;
+        const otherUser = normalizeEmail(req.query.with);
+        if (!otherUser) {
+            return res.status(400).json({ message: "Target user is required" });
+        }
+        const mutual = await Group.find({
+            members: { $all: [me, otherUser] }
+        });
+        res.json(mutual);
+    } catch (err) {
+        res.status(500).json({ message: err.message });
+    }
+});
+
+// Report User
+app.post("/report", requireAuth, async (req, res) => {
+    try {
+        const reporter = req.user.email;
+        const reportedUser = normalizeEmail(req.body.reportedUser || req.body.email);
+        const reason = String(req.body.reason || "").trim();
+
+        if (!reportedUser || !reason) {
+            return res.status(400).json({ message: "Reported user and reason are required" });
+        }
+
+        const report = await Report.create({
+            reporter,
+            reportedUser,
+            reason
+        });
+
+        res.json({ message: "User reported successfully", report });
+    } catch (err) {
+        res.status(500).json({ message: "Failed to submit report" });
+    }
+});
+
+// Block/Unblock REST toggle
+app.post("/block/toggle", requireAuth, async (req, res) => {
+    try {
+        const me = req.user.email;
+        const target = normalizeEmail(req.body.target || req.body.other || req.body.email);
+        if (!target) return res.status(400).json({ message: "Target user is required" });
+
+        const exists = await BlockedUser.findOne({ user: me, blockedUser: target });
+        if (exists) {
+            await BlockedUser.deleteOne({ user: me, blockedUser: target });
+            return res.json({ blocked: false, message: "User unblocked" });
+        } else {
+            await BlockedUser.create({ user: me, blockedUser: target });
+            return res.json({ blocked: true, message: "User blocked" });
+        }
+    } catch (err) {
+        res.status(500).json({ message: err.message });
+    }
+});
+
+// Get other user's profile
+app.get("/user/profile/:email", requireAuth, async (req, res) => {
+    try {
+        const targetEmail = normalizeEmail(req.params.email);
+        const userDoc = await User.findOne({ email: targetEmail });
+        if (!userDoc) {
+            return res.status(404).json({ message: "User not found" });
+        }
+        res.json({ user: sanitizeUser(userDoc) });
+    } catch (err) {
+        res.status(500).json({ message: err.message });
+    }
+});
+
+// Call History API
+app.get("/call-history", requireAuth, async (req, res) => {
+    try {
+        const userEmail = req.user.email;
+        const targetEmail = req.query.with ? normalizeEmail(req.query.with) : null;
+        let query;
+        if (targetEmail) {
+            query = {
+                $or: [
+                    { caller: userEmail, receiver: targetEmail },
+                    { caller: targetEmail, receiver: userEmail }
+                ]
+            };
+        } else {
+            query = {
+                $or: [
+                    { caller: userEmail },
+                    { receiver: userEmail }
+                ]
+            };
+        }
+        const history = await CallHistory.find(query).sort({ startedAt: -1, createdAt: -1 }).limit(50);
+        res.json(history);
+    } catch (err) {
+        res.status(500).json({ message: "Failed to fetch call history", error: err.message });
+    }
+});
+
+// Versioned encrypted cloud backup API
+app.post("/api/backups", requireAuth, async (req, res) => {
+    let backupRecord;
+    try {
+        const owner = normalizeEmail(req.user.email);
+        const includeMedia = req.body?.includeMedia !== false;
+        const payload = await collectBackupData(owner, {
+            withUser: req.body?.withUser,
+            groupId: req.body?.groupId,
+            includeMedia,
+            settings: req.body?.settings
+        });
+        const encrypted = encryptBackup(owner, payload);
+        const storageKey = `backups/${owner}/${new mongoose.Types.ObjectId()}.backup`;
+        backupRecord = await Backup.create({
+            owner,
+            storageKey,
+            status: "uploading",
+            version: BACKUP_VERSION,
+            size: encrypted.length,
+            includeMedia,
+            conversationCount: payload.conversations.length,
+            messageCount: payload.messages.length,
+            mediaCount: payload.media.length
+        });
+        await uploadBackup(owner, storageKey, encrypted);
+        backupRecord.status = "ready";
+        await backupRecord.save();
+        res.status(201).json({
+            id: backupRecord._id,
+            status: backupRecord.status,
+            createdAt: backupRecord.createdAt,
+            size: backupRecord.size,
+            includeMedia,
+            conversationCount: backupRecord.conversationCount,
+            messageCount: backupRecord.messageCount,
+            mediaCount: backupRecord.mediaCount
+        });
+    } catch (err) {
+        if (backupRecord) {
+            backupRecord.status = "failed";
+            backupRecord.error = err.message;
+            await backupRecord.save().catch(() => {});
+        }
+        res.status(503).json({ message: "Cloud backup failed", error: err.message });
+    }
+});
+
+app.get("/api/backups", requireAuth, async (req, res) => {
+    const backups = await Backup.find({
+        owner: normalizeEmail(req.user.email),
+        status: { $ne: "failed" }
+    }).sort({ createdAt: -1 }).select("-storageKey -error").lean();
+    res.json(backups);
+});
+
+app.get("/api/backups/:id", requireAuth, async (req, res) => {
+    const backup = await Backup.findOne({
+        _id: req.params.id,
+        owner: normalizeEmail(req.user.email),
+        status: "ready"
+    }).select("-storageKey -error").lean();
+    if (!backup) return res.status(404).json({ message: "Backup not found" });
+    res.json(backup);
+});
+
+app.get("/api/backups/:id/download", requireAuth, async (req, res) => {
+    try {
+        const owner = normalizeEmail(req.user.email);
+        const backup = await Backup.findOne({
+            _id: req.params.id,
+            owner,
+            status: "ready"
+        });
+        if (!backup) return res.status(404).json({ message: "Backup not found" });
+        const payload = decryptBackup(owner, await downloadBackup(backup.storageKey));
+        res.json(payload);
+    } catch (err) {
+        res.status(422).json({ message: "Backup could not be verified", error: err.message });
+    }
+});
+
+app.post("/api/backups/:id/restore", requireAuth, async (req, res) => {
+    try {
+        const owner = normalizeEmail(req.user.email);
+        const backup = await Backup.findOne({
+            _id: req.params.id,
+            owner,
+            status: "ready"
+        });
+        if (!backup) return res.status(404).json({ message: "Backup not found" });
+        const result = await restoreBackupData(owner, decryptBackup(owner, await downloadBackup(backup.storageKey)));
+        res.json({ message: "Backup restored", ...result });
+    } catch (err) {
+        res.status(422).json({ message: "Backup restore failed", error: err.message });
+    }
+});
+
+app.post("/api/backups/import", requireAuth, async (req, res) => {
+    try {
+        const result = await restoreBackupData(
+            normalizeEmail(req.user.email),
+            req.body?.backup
+        );
+        res.json({ message: "Backup imported", ...result });
+    } catch (err) {
+        res.status(422).json({ message: "Backup import failed", error: err.message });
+    }
+});
+
+// Legacy local JSON Chat Backup API
+app.get("/chat/backup", requireAuth, async (req, res) => {
+    try {
+        const me = normalizeEmail(req.user.email);
+        const target = req.query.with ? normalizeEmail(req.query.with) : null;
+        const groupId = req.query.groupId;
+        let query;
+        if (groupId) {
+            const group = await Group.findOne({ _id: groupId, members: me }).select("_id").lean();
+            if (!group) {
+                return res.status(403).json({ message: "You are not a member of this group" });
+            }
+            query = { to: String(group._id) };
+        } else if (target) {
+            query = {
+                $or: [
+                    { from: me, to: target },
+                    { from: target, to: me }
+                ]
+            };
+        } else {
+            const groups = await Group.find({ members: me }).select("_id").lean();
+            const groupIds = groups.map((group) => String(group._id));
+            query = {
+                $or: [{ from: me }, { to: me }, ...(groupIds.length ? [{ to: { $in: groupIds } }] : [])]
+            };
+        }
+        const msgs = await Message.find(query).sort({ createdAt: 1 });
+        res.json({
+            backupDate: new Date(),
+            user: me,
+            target: target || groupId || "all",
+            count: msgs.length,
+            mediaCount: msgs.filter(isMediaMessage).length,
+            messages: msgs
+        });
+    } catch (err) {
+        res.status(500).json({ message: "Failed to backup chat", error: err.message });
+    }
+});
+
+// Chat Restore API
+app.post("/chat/restore", requireAuth, async (req, res) => {
+    try {
+        const { messages: restoreMsgs } = req.body;
+        if (!Array.isArray(restoreMsgs) || restoreMsgs.length === 0) {
+            return res.status(400).json({ message: "No valid messages array provided to restore" });
+        }
+        let insertedCount = 0;
+        for (const m of restoreMsgs) {
+            if (m.message || m.mediaUrl) {
+                const existing = m._id ? await Message.findById(m._id) : null;
+                if (!existing) {
+                    await Message.create({
+                        from: m.from,
+                        to: m.to,
+                        groupId: m.groupId,
+                        message: m.message || "",
+                        messageType: m.messageType || "text",
+                        mediaUrl: m.mediaUrl || "",
+                        fileName: m.fileName || "",
+                        createdAt: m.createdAt || new Date()
+                    });
+                    insertedCount++;
+                }
+            }
+        }
+        res.json({ message: "Chat restored successfully", insertedCount });
+    } catch (err) {
+        res.status(500).json({ message: "Failed to restore chat", error: err.message });
+    }
+});
 app.post("/create-group",requireAuth,async(req,res)=>{
     try{
-        const{name,members,groupKeys}=req.body;
+        const{name,members}=req.body;
 
         const allMembers=[...new Set([...members,req.user.email])];
 
         const group=await Group.create({
             name,
             members:allMembers,
-            admin:req.user.email,
-            groupKeys: groupKeys || {}
+            admin:req.user.email
         });
         allMembers.forEach(member=>{
             if(member===req.user.email) return;
@@ -1728,38 +2522,6 @@ app.post("/create-group",requireAuth,async(req,res)=>{
         res.json({group});
     }catch(err){
         res.status(500).json({message:err.message});
-    }
-});
-
-app.post("/group/:groupId/rotate-keys", requireAuth, async (req, res) => {
-    try {
-        const { groupId } = req.params;
-        const { groupKeys } = req.body;
-        const group = await Group.findById(groupId);
-        if (!group) {
-            return res.status(404).json({ message: "Group not found" });
-        }
-        if (!group.members.includes(req.user.email)) {
-            return res.status(403).json({ message: "Not a member of this group" });
-        }
-        group.groupKeys = groupKeys || {};
-        group.groupKeyVersion = (group.groupKeyVersion || 1) + 1;
-        await group.save();
-
-        group.members.forEach(member => {
-            const memberSockets = Object.keys(users).filter(id => users[id]?.email === member);
-            memberSockets.forEach(id => {
-                io.to(id).emit("groupKeyUpdated", {
-                    groupId: group._id,
-                    groupKeys: group.groupKeys,
-                    groupKeyVersion: group.groupKeyVersion
-                });
-            });
-        });
-
-        res.json({ message: "Group keys updated successfully", group });
-    } catch (err) {
-        res.status(500).json({ message: err.message });
     }
 });
 app.post("/message/:id/star",requireAuth,async(req,res)=>{
@@ -1827,6 +2589,13 @@ app.get("/groups",requireAuth,async(req,res)=>{
 //GET Group MeSSAGES
 app.get("/group-messages/:groupId",requireAuth,async(req,res)=>{
     try{
+        const group = await Group.findOne({
+            _id: req.params.groupId,
+            members: req.user.email
+        }).select("_id").lean();
+        if (!group) {
+            return res.status(403).json({ message: "You are not a member of this group" });
+        }
         //get group id from URL
         const deletedMessages = await DeletedMessage.find({
     user: req.user.email
@@ -1850,7 +2619,7 @@ const messages = await Message.find({
         //send messages
         res.json(messages);
     }catch(err){
-       res.json(
+       res.status(500).json(
     messages.map(msg => ({
         _id: msg._id,
         from: msg.from,
@@ -1888,6 +2657,42 @@ const messages = await Message.find({
 );
     }
 })
+
+app.get("/media/:messageId/download", requireAuth, async (req, res) => {
+    try {
+        const message = await Message.findById(req.params.messageId).lean();
+        if (!message || !message.mediaUrl) {
+            return res.status(404).json({ message: "Media not found" });
+        }
+
+        const requester = normalizeEmail(req.user.email);
+        let authorized = message.from === requester || message.to === requester;
+        if (!authorized) {
+            const group = await Group.findOne({
+                _id: message.to,
+                members: requester
+            }).select("_id").lean();
+            authorized = Boolean(group);
+        }
+        if (!authorized) {
+            return res.status(403).json({ message: "You are not authorized to access this media" });
+        }
+
+        const match = String(message.mediaUrl).match(/^data:([^;,]+)(?:;[^,]+)*,([\s\S]+)$/);
+        if (!match) {
+            return res.status(502).json({ message: "Media storage format is unsupported" });
+        }
+        const contentType = match[1];
+        const buffer = Buffer.from(match[2], "base64");
+        const filename = String(message.fileName || `media-${message._id}`).replace(/["\r\n]/g, "_");
+        res.setHeader("Content-Type", contentType);
+        res.setHeader("Content-Length", buffer.length);
+        res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+        return res.send(buffer);
+    } catch (error) {
+        return res.status(500).json({ message: "Unable to download media" });
+    }
+});
 app.get("/group/:groupId", requireAuth, async (req, res) => {
     try {
 
@@ -2173,93 +2978,12 @@ app.get("/me", requireAuth, async (req, res) => {
     } catch (err) {
         res.status(500).json({ message: "Failed to load profile" });
     }
-});
-
-app.post("/user/public-key", requireAuth, async (req, res) => {
-    try {
-        const { publicKey } = req.body;
-        if (!publicKey) {
-            return res.status(400).json({ message: "Public key required" });
-        }
-        await User.updateOne(
-            { email: req.user.email },
-            { $set: { publicKey } }
-        );
-        res.json({ message: "Public key updated successfully" });
-    } catch (err) {
-        res.status(500).json({ message: err.message });
-    }
-});
-
-app.get("/user/:email/public-key", requireAuth, async (req, res) => {
-    try {
-        const targetEmail = normalizeEmail(req.params.email);
-        const user = await User.findOne({ email: targetEmail });
-        if (!user) {
-            return res.status(404).json({ message: "User not found" });
-        }
-        res.json({ email: targetEmail, publicKey: user.publicKey || "" });
-    } catch (err) {
-        res.status(500).json({ message: err.message });
-    }
-});
+})
 app.use("/api/ai", aiRoutes);
 app.use(
     "/uploads",
     express.static(path.join(__dirname, "uploads"))
 );
-
-// ── Cloud Backup Endpoints ──────────────────────────────────────────────────
-
-// POST /backup — create or update cloud backup
-app.post("/backup", requireAuth, async (req, res) => {
-    try {
-        const { messages, mediaMessages, settings, backupType } = req.body;
-        const existing = await Backup.findOne({ userEmail: req.user.email });
-        if (existing) {
-            existing.messages = messages || existing.messages;
-            existing.mediaMessages = mediaMessages || existing.mediaMessages;
-            existing.settings = settings || existing.settings;
-            existing.backupType = backupType || "full";
-            existing.updatedAt = new Date();
-            await existing.save();
-            return res.json({ message: "Backup updated successfully", backup: existing });
-        }
-        const backup = await Backup.create({
-            userEmail: req.user.email,
-            messages: messages || [],
-            mediaMessages: mediaMessages || [],
-            settings: settings || {},
-            backupType: backupType || "full"
-        });
-        res.json({ message: "Backup created successfully", backup });
-    } catch (err) {
-        res.status(500).json({ message: err.message });
-    }
-});
-
-// GET /backup — fetch the user's cloud backup
-app.get("/backup", requireAuth, async (req, res) => {
-    try {
-        const backup = await Backup.findOne({ userEmail: req.user.email });
-        if (!backup) {
-            return res.status(404).json({ message: "No backup found" });
-        }
-        res.json({ backup });
-    } catch (err) {
-        res.status(500).json({ message: err.message });
-    }
-});
-
-// DELETE /backup — delete the user's cloud backup
-app.delete("/backup", requireAuth, async (req, res) => {
-    try {
-        await Backup.deleteOne({ userEmail: req.user.email });
-        res.json({ message: "Backup deleted successfully" });
-    } catch (err) {
-        res.status(500).json({ message: err.message });
-    }
-});
 
 server.listen(5001, () => {
     console.log("Server runnnig on 5001");

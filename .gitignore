@@ -1,13 +1,30 @@
-# Ignore all node_modules folders
+﻿# Dependencies
 node_modules/
 **/node_modules/
 
-# Environment files (NEVER commit these - contain secret API keys)
+# Environment files
 .env
 **/.env
-*.env.local
-*.env.*.local
+**/.env.*
+!**/.env.example
 
-# Build folders
+# Runtime backups and storage
+backups/
+**/backups/
+*.backup
+
+# Builds
 dist/
+**/dist/
 build/
+**/build/
+
+# Logs
+*.log
+**/*.log
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

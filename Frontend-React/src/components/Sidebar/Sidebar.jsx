@@ -1,7 +1,5 @@
 import {useEffect,useState} from 'react';
-
-
-
+import {useNavigate} from 'react-router-dom';
 import {useAuth} from '../../context/AuthContext';
 import {
     fetchUsers,
@@ -9,18 +7,14 @@ import {
     createGroup,
     archiveChat,
     unarchiveChat,
-    getArchivedChats,
-    fetchUserPublicKeyAPI
+    getArchivedChats
 } from "../../services/api";
-import {
-    generateAESGroupKey,
-    encryptGroupKeyForMembers,
-    getOrGenerateUserKeys
-} from "../../utils/crypto";
+import ProfileAvatar from "../ProfileAvatar";
 
 
-export default function Sidebar({onSelectUser,selectedUser,onlineUsers = [],socket,userStatusMap = {}}){
+export default function Sidebar({onSelectUser,selectedUser,onlineUsers = [],socket,userStatusMap = {}, onOpenProfile, profilePhoto, onCallHistory, onBackupRestore, onOpenAI, onAnalytics}){
     const {token,user}=useAuth();
+    const navigate=useNavigate();
 
     const [users,setUsers]=useState([]);
 
@@ -37,6 +31,12 @@ export default function Sidebar({onSelectUser,selectedUser,onlineUsers = [],sock
     const [groupName,setGroupName]=useState("");
     const [selectedMembers,setSelectedMembers]=useState([]);
     const [menuOpen, setMenuOpen] = useState(null);
+    const [filterTab, setFilterTab] = useState("all"); // 'all', 'unread', 'groups', 'archived'
+
+    const totalUnread = Object.values(unreadCounts).reduce((a, b) => a + (Number(b) || 0), 0) +
+                        Object.values(groupUnreadCounts).reduce((a, b) => a + (Number(b) || 0), 0);
+
+    const activeCount = users.filter(u => u.email !== user?.email && onlineUsers.includes(u.email)).length;
 
     const archivedUsers = users.filter(user =>
     archivedChats.some(chat =>
@@ -62,7 +62,7 @@ const archivedGroups = groups.filter(group =>
                 console.error("fetchUsers returned:",data);
                 return;
             }
-         
+            setUsers(data);
 
             // Initialize from API
             const counts = {};
@@ -73,8 +73,6 @@ const archivedGroups = groups.filter(group =>
             });
             setUnreadCounts(prev => ({...prev, ...counts}));
             setLastMessages(prev => ({...prev, ...lasts}));
-
-            setUsers(data); 
 
             if(!search&&data.length>0){
                 const filtered=data.filter((u)=>u.email!==user.email);
@@ -331,35 +329,93 @@ toast && (
         
     
             <div className="sidebar">
+                {/* Main Chats Column */}
+                <div className="sidebar-chats-col">
+                    <div className="sidebar-header">
+                        <div className="sidebar-title-row" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                                <button
+                                    type="button"
+                                    onClick={onOpenProfile}
+                                    title="Open your profile"
+                                    style={{ padding: 0, border: 0, background: "transparent", cursor: "pointer", display: "flex" }}
+                                >
+                                    <ProfileAvatar name={user?.name} photo={profilePhoto || user?.photo} size={40} />
+                                </button>
+                                <div>
+                                    <h2 style={{ margin: 0, fontSize: "20px", fontWeight: 700, color: "var(--text-color)" }}>Chat</h2>
+                                    <span style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "5px" }}>
+                                        <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: activeCount > 0 ? "#10b981" : "#64748b", display: "inline-block" }} />
+                                        {activeCount} active
+                                    </span>
+                                </div>
+                            </div>
 
-                <div className="sidebar-header">
-                    <h2>Chats</h2>
-                    <div className="search-container">
-                        <input
-                        placeholder="Search friends..."
-                        value={search}
-                        onChange={(e)=>setSearch(e.target.value)}
-                        />
+                            <button
+                                type="button"
+                                className="nav-rail-btn"
+                                onClick={() => {
+                                    const cur = document.body.dataset.theme;
+                                    document.body.dataset.theme = cur === 'dark' ? 'light' : 'dark';
+                                }}
+                                title="Toggle Light/Dark Theme"
+                                style={{ width: "36px", height: "36px", fontSize: "16px", borderRadius: "12px" }}
+                            >
+                                🌓
+                            </button>
+                        </div>
+                        <div className="search-container">
+                            <span className="search-icon">🔍</span>
+                            <input
+                                placeholder="Search Chat..."
+                                value={search}
+                                onChange={(e)=>setSearch(e.target.value)}
+                            />
+                        </div>
                     </div>
-                </div>
-                <button
-                onClick={()=>setShowModal(true)}
-                style={{marginBottom:"10px"}}
-                >
-                  ➕ Create Group  
-                </button>
 
-                <div className="friend-list" style={{overflowY:"auto",overflowX:"visible"}}>
+                    {/* Filter Tabs */}
+                    <div className="sidebar-tabs">
+                        <button
+                            className={`sidebar-tab-btn ${filterTab === 'all' ? 'active' : ''}`}
+                            onClick={() => setFilterTab('all')}
+                        >
+                            All
+                        </button>
+                        <button
+                            className={`sidebar-tab-btn ${filterTab === 'unread' ? 'active' : ''}`}
+                            onClick={() => setFilterTab('unread')}
+                        >
+                            Unread {totalUnread > 0 && <span className="tab-badge">{totalUnread}</span>}
+                        </button>
+                        <button
+                            className={`sidebar-tab-btn ${filterTab === 'groups' ? 'active' : ''}`}
+                            onClick={() => setFilterTab('groups')}
+                        >
+                            Groups ({groups.length})
+                        </button>
+                        {archivedChats.length > 0 && (
+                            <button
+                                className={`sidebar-tab-btn ${filterTab === 'archived' ? 'active' : ''}`}
+                                onClick={() => setFilterTab('archived')}
+                            >
+                                Archived
+                            </button>
+                        )}
+                    </div>
+
+                    <div className="friend-list">
 
                 {users
-                .filter(u =>
-    u.email !== user.email &&
-    !archivedChats.some(
-        a =>
-            a.chatId === u.email &&
-            a.chatType === "private"
-    )
-)
+                .filter(u => {
+                    if (u.email === user.email) return false;
+                    const isArchived = archivedChats.some(a => a.chatId === u.email && a.chatType === "private");
+                    if (filterTab === "archived") return isArchived;
+                    if (isArchived) return false;
+                    if (filterTab === "groups") return false;
+                    if (filterTab === "unread") return (unreadCounts[u.email] || 0) > 0;
+                    return true;
+                })
                 .map((u)=>{
                     const isOnline=onlineUsers.includes(u.email);
                     const fallbackLastSeen=u.lastSeen;
@@ -392,33 +448,10 @@ toast && (
                         className={`friend ${selectedUser?.email===u.email ? 'active' : ''}`}
                         >
                             <div className="avatar-container">
-                              <div className="avatar">
-
-    {u.photo ? (
-
-        <img
-            src={u.photo}
-            alt={u.name}
-            style={{
-                width: "100%",
-                height: "100%",
-                borderRadius: "50%",
-                objectFit: "cover"
-            }}
-        />
-
-    ) : (
-
-        initials
-
-    )}
-
-</div>
-                            {
-    u.email !== "ai@chatapp.com" && (
-        <div className={`status-dot ${isOnline ? "online" : ""}`}></div>
-    )
-}
+                              <ProfileAvatar name={u.name} photo={u.photo} size={48} className="avatar" />
+                                {u.email !== "ai@chatapp.com" && (
+                                    <div className={`status-dot ${isOnline ? 'online' : ''}`}></div>
+                                )}
                             </div>
 
                             <div className="friend-info">
@@ -527,502 +560,152 @@ toast && (
                     );
                 })
                 }
-                </div>
-                <hr />
-
-<h3
-    onClick={() => setShowArchived(!showArchived)}
-    style={{
-        cursor: "pointer",
-        userSelect: "none"
-    }}
->
-    📁 Archived ({archivedChats.length})
-</h3>
-{showArchived &&
-        archivedUsers.map(u => (
-
-        <div
-      key={u.email}
-    className="friend"
-    onClick={() => {
-
-       onSelectUser(u);
-
-                setUnreadCounts(prev => ({
-                    ...prev,
-                    [u.email]: 0
-                }));
-
-    }}
->
-
-        <div className="avatar-container">
-
-            <div className="avatar">
-             {u.photo ? (
-
-        <img
-            src={u.photo}
-            alt={u.name}
-            style={{
-                width: "100%",
-                height: "100%",
-                borderRadius: "50%",
-                objectFit: "cover"
-            }}
-        />
-
-    ) : (
-
-        (u.name || "?")
-            .substring(0,2)
-            .toUpperCase()
-
-    )}
-                </div>
-
-                <div
-                className={`status-dot ${
-                onlineUsers.includes(u.email)
-                    ?"online"
-                    :""
-                }`}
-                    ></div>
-
-                    </div>
-
-                    <div className="friend-info">
-
-            <div
-                style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center"
-                    }}
-                    >
-
-                    <div className="friend-name">
-                 {u.name}
-                    </div>
-
-                    <div
-                    style={{
-                    fontSize: "12px",
-                        color: "#999"
-                         }}
+                
+                {groups.filter(group => {
+                    const isArchived = archivedChats.some(a => a.chatId === group._id && a.chatType === "group");
+                    if (filterTab === "archived") return isArchived;
+                    if (isArchived) return false;
+                    if (filterTab === "unread") return (groupUnreadCounts[group._id] || 0) > 0;
+                    if (filterTab === "groups") return true;
+                    return false;
+                }).map(g => {
+                    const isArchived = archivedChats.some(a => a.chatId === g._id && a.chatType === "group");
+                    return (
+                        <div
+                            key={g._id}
+                            onClick={() => {
+                                onSelectUser({
+                                    ...g,
+                                    isGroup: true
+                                });
+                                setGroupUnreadCounts(prev => ({
+                                    ...prev,
+                                    [g._id]: 0
+                                }));
+                            }}
+                            className={`friend ${selectedUser?._id === g._id ? "active" : ""}`}
                         >
-                    {
-                 lastMessages[u.email]
-                 ? new Date(
-                     lastMessages[u.email].createdAt
-                    ).toLocaleTimeString([], {
-                       hour: "2-digit",
-                       minute: "2-digit"
-                     })
-                    : ""
-                    }
-</div>
+                            {/* Avatar */}
+                            <div className="avatar-container">
+                                <ProfileAvatar name={g.name} photo={g.photo} size={48} className="avatar" />
+                            </div>
 
-</div>
+                            {/* Group info */}
+                            <div className="friend-info">
+                                <div className="friend-name">
+                                    {g.name}
+                                </div>
+                                <div className="friend-last-msg">
+                                    Group chat
+                                </div>
+                            </div>
 
-<div className="friend-last-msg">
-   {
-    lastMessages[u.email]
-        ? (
-            lastMessages[u.email].messageType === "media"
-                ? "📷 Photo/Video"
-                : lastMessages[u.email].message
-        )
-        : "No messages"
-}
-</div>
+                            {/* Three-dot menu */}
+                            <div
+                                style={{
+                                    marginLeft: "auto",
+                                    position: "relative"
+                                }}
+                            >
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        setMenuOpen(
+                                            menuOpen === `group-${g._id}`
+                                                ? null
+                                                : `group-${g._id}`
+                                        );
+                                    }}
+                                    style={{
+                                        background: "transparent",
+                                        border: "none",
+                                        color: "white",
+                                        cursor: "pointer",
+                                        fontSize: "20px"
+                                    }}
+                                >
+                                    ⋮
+                                </button>
 
-</div>
-<div
-    style={{
-        marginLeft:"auto",
-        position:"relative"
-    }}
-    >
-        <button 
-        onClick={(e)=>{
-            e.stopPropagation();
+                                {menuOpen === `group-${g._id}` && (
+                                    <div
+                                        style={{
+                                            position: "absolute",
+                                            right: 0,
+                                            bottom: "35px",
+                                            background: "#222",
+                                            borderRadius: "8px",
+                                            padding: "8px",
+                                            display: "flex",
+                                            flexDirection: "column",
+                                            zIndex: 1000
+                                        }}
+                                    >
+                                        <button
+                                            onClick={async (e) => {
+                                                e.stopPropagation();
+                                                if (isArchived) {
+                                                    const data = await unarchiveChat(token, g._id);
+                                                    alert(data.message);
+                                                    if (data.message === "Chat restored") {
+                                                        setArchivedChats(prev => prev.filter(chat => chat.chatId !== g._id));
+                                                    }
+                                                } else {
+                                                    const data = await archiveChat(token, g._id, "group");
+                                                    alert(data.message);
+                                                    if (data.message === "Archived successfully" || data.message === "Already archived") {
+                                                        setArchivedChats(prev => [
+                                                            ...prev,
+                                                            { chatId: g._id, chatType: "group" }
+                                                        ]);
+                                                    }
+                                                }
+                                                setMenuOpen(null);
+                                            }}
+                                        >
+                                            {isArchived ? "Unarchive Group" : "Archive Group"}
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
 
-            setMenuOpen(
-                menuOpen===`archive-${u.email}`
-                ?null
-                :`archive-${u.email}`
-            );
-
-        }}
-           style={{
-        background: "transparent",
-        border: "none",
-        color: "white",
-        cursor: "pointer",
-        fontSize: "20px"
-    }}
-    >
-           ⋮
-    </button>
-
-{menuOpen === `archive-${u.email}` && (
-
-<div
-    style={{
-        position: "absolute",
-        right: 0,
-        bottom: "35px",
-        background: "#222",
-        borderRadius: "8px",
-        padding: "8px",
-        display: "flex",
-        flexDirection: "column",
-        zIndex: 1000
-    }}
->
-
-    <button
-onClick={async (e) => {
-    e.stopPropagation();
-
-    const data = await unarchiveChat(
-        token,
-        u.email
-    );
-
-    alert(data.message);
-
-    if (data.message === "Chat restored") {
-
-        setArchivedChats(prev =>
-            prev.filter(chat =>
-                chat.chatId !== u.email
-            )
-        );
-
-    }
-
-    setMenuOpen(null);
-    }}
->
-    Unarchive
-</button>
-
-<button>
-    Delete Chat
-</button>
-
-<button>
-    Block User
-</button>
-
-</div>
-
-)}
-
-</div>
-{unreadCounts[u.email]>0&&(
-    <div className="unread-badge">
-        {unreadCounts[u.email]}
-        </div>
-)}
-
-
-</div>
-
-))
-}
-<h4 style={{ marginTop: "10px" }}>Groups</h4>
-
-{archivedGroups.map(g => (
-
-<div
-    key={g._id}
-    className="friend"
-    onClick={() => {
-
-        onSelectUser({
-            ...g,
-            isGroup: true
-        });
-
-    }}
->
-
-    <div className="avatar-container">
-       <div className="avatar">
-    {g.photo ? (
-        <img
-            src={g.photo}
-            alt={g.name}
-            style={{
-                width: "100%",
-                height: "100%",
-                borderRadius: "50%",
-                objectFit: "cover"
-            }}
-        />
-    ) : (
-        "👥"
-    )}
-</div>
-    </div>
-
-    <div className="friend-info">
-
-        <div className="friend-name">
-            {g.name}
-        </div>
-
-        <div className="friend-last-msg">
-            Group Chat
-        </div>
-
-    </div>
-        <div
-    style={{
-        marginLeft: "auto",
-        position: "relative"
-    }}
->
-
-    <button
-        onClick={(e) => {
-            e.stopPropagation();
-
-            setMenuOpen(
-                menuOpen === `archived-group-${g._id}`
-                    ? null
-                    : `archived-group-${g._id}`
-            );
-        }}
-        style={{
-            background: "transparent",
-            border: "none",
-            color: "white",
-            cursor: "pointer",
-            fontSize: "20px"
-        }}
-    >
-        ⋮
-    </button>
-
-    {menuOpen === `archived-group-${g._id}` && (
-
-        <div
-            style={{
-                position: "absolute",
-                right: 0,
-                bottom: "35px",
-                background: "#222",
-                borderRadius: "8px",
-                padding: "8px",
-                display: "flex",
-                flexDirection: "column",
-                zIndex: 1000
-            }}
-        >
-
-            <button
-                onClick={async (e) => {
-
-                    e.stopPropagation();
-
-                    const data = await unarchiveChat(
-                        token,
-                        g._id
+                            {/* Unread badge */}
+                            {groupUnreadCounts[g._id] > 0 && (
+                                <div className="unread-badge">
+                                    {groupUnreadCounts[g._id]}
+                                </div>
+                            )}
+                        </div>
                     );
+                })}
 
-                    alert(data.message);
+                {filterTab === "groups" && groups.filter(g => !archivedChats.some(a => a.chatId === g._id && a.chatType === "group")).length === 0 && (
+                    <div style={{ textAlign: "center", padding: "40px 20px", color: "var(--text-muted)", fontSize: "14px" }}>
+                        No groups yet.<br />Click the <strong>+</strong> button below to create one!
+                    </div>
+                )}
 
-                    if (data.message === "Chat restored") {
+                {filterTab === "archived" && archivedChats.length === 0 && (
+                    <div style={{ textAlign: "center", padding: "40px 20px", color: "var(--text-muted)", fontSize: "14px" }}>
+                        No archived chats
+                    </div>
+                )}
 
-                        setArchivedChats(prev =>
-                            prev.filter(chat =>
-                                chat.chatId !== g._id
-                            )
-                        );
-
-                    }
-
-                    setMenuOpen(null);
-
-                }}
-            >
-                Unarchive Group
-            </button>
-
-        </div>
-
-    )}
-
-</div>
-
-</div>
-
-))}
-                <h3>Groups</h3>
-
-    {
-    groups.filter(group=>
-        !archivedChats.some(
-            a=>a.chatId===group._id&&
-            a.chatType==="group" 
-               )
-    ).map(g => {
-
-        // create initials for group avatar
-        const initials = String(g.name || "?").substring(0,2).toUpperCase();
-
-        return (
-           <div
-    key={g._id}
-    onClick={() => {
-        onSelectUser({
-            ...g,
-            isGroup: true
-        });
-
-        setGroupUnreadCounts(prev => ({
-            ...prev,
-            [g._id]: 0
-        }));
-    }}
-    className={`friend ${selectedUser?._id === g._id ? "active" : ""}`}
->
-
-    {/* Avatar */}
-    <div className="avatar-container">
-        <div className="avatar">
-
-    {g.photo ? (
-
-        <img
-            src={g.photo}
-            alt={g.name}
-            style={{
-                width: "100%",
-                height: "100%",
-                objectFit: "cover",
-                borderRadius: "50%"
-            }}
-        />
-
-    ) : (
-
-        "👥"
-
-    )}
-
-</div>
-    </div>
-
-    {/* Group info */}
-    <div className="friend-info">
-        <div className="friend-name">
-            {g.name}
-        </div>
-
-        <div className="friend-last-msg">
-            Group chat
-        </div>
-    </div>
-
-    {/* Three-dot menu */}
-    <div
-        style={{
-            marginLeft: "auto",
-            position: "relative"
-        }}
-    >
-
-        <button
-            onClick={(e) => {
-                e.stopPropagation();
-
-                setMenuOpen(
-                    menuOpen === `group-${g._id}`
-                        ? null
-                        : `group-${g._id}`
-                );
-            }}
-            style={{
-                background: "transparent",
-                border: "none",
-                color: "white",
-                cursor: "pointer",
-                fontSize: "20px"
-            }}
-        >
-            ⋮
-        </button>
-
-        {menuOpen === `group-${g._id}` && (
-
-            <div
-                style={{
-                    position: "absolute",
-                    right: 0,
-                    bottom: "35px",
-                    background: "#222",
-                    borderRadius: "8px",
-                    padding: "8px",
-                    display: "flex",
-                    flexDirection: "column",
-                    zIndex: 1000
-                }}
-            >
-
-                <button
-                    onClick={async (e) => {
-
-                        e.stopPropagation();
-
-                        const data = await archiveChat(
-                            token,
-                            g._id,
-                            "group"
-                        );
-
-                        alert(data.message);
-
-                        if (
-                            data.message === "Archived successfully" ||
-                            data.message === "Already archived"
-                        ) {
-                            setArchivedChats(prev => [
-                                ...prev,
-                                {
-                                    chatId: g._id,
-                                    chatType: "group"
-                                }
-                            ]);
-                        }
-
-                        setMenuOpen(null);
-
-                    }}
-                >
-                    Archive Group
-                </button>
-
-            </div>
-
-        )}
-
-    </div>
-
-    {/* Unread badge */}
-    {groupUnreadCounts[g._id] > 0 && (
-        <div className="unread-badge">
-            {groupUnreadCounts[g._id]}
-        </div>
-    )}
-
-</div>        );
-    })}
+                {filterTab === "unread" && totalUnread === 0 && (
+                    <div style={{ textAlign: "center", padding: "40px 20px", color: "var(--text-muted)", fontSize: "14px" }}>
+                        No unread messages
+                    </div>
+                )}
+                    </div>
+                    {/* Floating '+' button to create group */}
+                    <button
+                        className="fab-create-chat"
+                        onClick={() => setShowModal(true)}
+                        title="Create New Group"
+                    >
+                        +
+                    </button>
+                </div>
             </div>
             {showModal && (
                 <div 
@@ -1112,41 +795,14 @@ onClick={async (e) => {
                                         alert("Please enter a group name");
                                         return;
                                     }
-                                    try {
-                                        const allMemberEmails = [...new Set([...selectedMembers, user.email])];
-                                        const memberPublicKeysMap = {};
-                                        for (const email of allMemberEmails) {
-                                            try {
-                                                const pkRes = await fetchUserPublicKeyAPI(token, email);
-                                                if (pkRes?.publicKey) {
-                                                    memberPublicKeysMap[email] = pkRes.publicKey;
-                                                }
-                                            } catch (e) {
-                                                console.error("Failed to fetch public key for", email, e);
-                                            }
-                                        }
-                                        if (!memberPublicKeysMap[user.email]) {
-                                            const userKeys = await getOrGenerateUserKeys(user.email);
-                                            if (userKeys?.publicKey) {
-                                                memberPublicKeysMap[user.email] = userKeys.publicKey;
-                                            }
-                                        }
-
-                                        const rawGroupKey = await generateAESGroupKey();
-                                        const groupKeys = await encryptGroupKeyForMembers(rawGroupKey, memberPublicKeysMap);
-
-                                        const res = await createGroup(token, { name: groupName, members: selectedMembers, groupKeys });
-                                        if (res.group) {
-                                            setGroups(prev => [...prev, res.group]);
-                                            setShowModal(false);
-                                            setGroupName("");
-                                            setSelectedMembers([]);
-                                        } else {
-                                            alert(res.message || "Failed to create group");
-                                        }
-                                    } catch (err) {
-                                        console.error("Error creating E2EE group:", err);
-                                        alert("Failed to create group: " + err.message);
+                                    const res = await createGroup(token, { name: groupName, members: selectedMembers });
+                                    if (res.group) {
+                                        setGroups(prev => [...prev, res.group]);
+                                        setShowModal(false);
+                                        setGroupName("");
+                                        setSelectedMembers([]);
+                                    } else {
+                                        alert(res.message || "Failed to create group");
                                     }
                                 }}
                                 style={{

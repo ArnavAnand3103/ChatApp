@@ -1,35 +1,20 @@
 import mongoose from "mongoose";
 
 const backupSchema = new mongoose.Schema({
-    userEmail: {
+    owner: { type: String, required: true, index: true },
+    storageKey: { type: String, required: true, unique: true },
+    status: {
         type: String,
-        required: true,
-        unique: true
+        enum: ["uploading", "ready", "failed"],
+        default: "uploading"
     },
-    messages: {
-        type: Array,
-        default: []
-    },
-    mediaMessages: {
-        type: Array,
-        default: []
-    },
-    settings: {
-        type: Object,
-        default: {}
-    },
-    backupType: {
-        type: String,
-        default: "full"
-    },
-    updatedAt: {
-        type: Date,
-        default: Date.now
-    },
-    createdAt: {
-        type: Date,
-        default: Date.now
-    }
-});
+    version: { type: Number, required: true },
+    size: { type: Number, default: 0 },
+    includeMedia: { type: Boolean, default: false },
+    conversationCount: { type: Number, default: 0 },
+    messageCount: { type: Number, default: 0 },
+    mediaCount: { type: Number, default: 0 },
+    error: { type: String, default: "" }
+}, { timestamps: true });
 
 export default mongoose.model("Backup", backupSchema);

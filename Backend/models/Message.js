@@ -117,6 +117,34 @@ deletedAt: {
     type: String,
     default: ""
 },
+    isEncrypted: {
+        type: Boolean,
+        default: false
+    },
+    encryptionVersion: {
+        type: Number,
+        default: 1
+    },
+    ciphertext: {
+        type: String,
+        default: ""
+    },
+    ciphertextType: {
+        type: Number,
+        default: 0
+    },
+    senderDeviceId: {
+        type: Number,
+        default: null
+    },
+    recipientDeviceId: {
+        type: Number,
+        default: null
+    },
+    encryptedPayload: {
+        type: mongoose.Schema.Types.Mixed,
+        default: null
+    },
     createdAt:{
         type:Date,
         default:Date.now

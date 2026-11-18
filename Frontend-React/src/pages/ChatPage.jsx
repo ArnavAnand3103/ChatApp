@@ -5,13 +5,11 @@ import Sidebar from '../components/Sidebar/Sidebar';
 import { useAuth } from '../context/AuthContext';
 
 import { createSocket } from '../services/socket';
-import { fetchAnalytics, fetchMe, uploadProfilePhoto, updatePublicKeyAPI } from '../services/api';
-import { getOrGenerateUserKeys } from '../utils/crypto';
+import { deleteProfilePhoto, fetchAnalytics, fetchMe, uploadProfilePhoto } from '../services/api';
 
 import Chat from '../components/Chat/Chat';
 import ChatHeader from '../components/ChatHeader';
 import GroupInfoModal from '../components/GroupInfoModal';
-import BackupModal from '../components/BackupModal';
 import { requestNotificationPermission } from "../utils/notification";
 import PhotoViewer from '../components/PhotoViewer';
 
@@ -27,8 +25,12 @@ import AudioCall from "../components/Call/AudioCall";
 import VideoCall from "../components/Call/VideoCall";
 import GroupCall from "../components/Call/GroupCall";
 import IncomingGroupCall from "../components/Call/IncomingGroupCall";
-
-
+import CallHistoryModal from "../components/CallHistoryModal";
+import BackupRestoreModal from "../components/BackupRestoreModal";
+import AIAssistantModal from "../components/AIAssistantModal";
+import ChatAnalyticsModal from "../components/ChatAnalyticsModal";
+import ContactInfoModal from "../components/ContactInfoModal";
+import ProfilePhotoUploadModal from "../components/ProfilePhotoUploadModal";
 
 export default function ChatPage() {
 
@@ -36,14 +38,20 @@ export default function ChatPage() {
   const { user, token, logout } = useAuth();
 
   const [selectedUser, setSelectedUser] = useState(null);
-
-
   const [socket, setSocket] = useState(null);
+  const [showCallHistory, setShowCallHistory] = useState(false);
+  const [showBackupRestore, setShowBackupRestore] = useState(false);
+  const [refreshMessagesSignal, setRefreshMessagesSignal] = useState(0);
+  const [showAIAssistant, setShowAIAssistant] = useState(false);
+  const [showContactInfo, setShowContactInfo] = useState(false);
+  const [showOwnProfile, setShowOwnProfile] = useState(false);
+  const [showAnalytics, setShowAnalytics] = useState(false);
+  const [photoDraft, setPhotoDraft] = useState(null);
 
   const [onlineUsers, setOnlineUsers] = useState([]);
   const [userStatusMap, setUserStatusMap] = useState({});
   const [isBlocked, setIsBlocked] = useState(false);
-  const [theme, setTheme] = useState(localStorage.getItem("chatTheme") || "dark");
+  const [theme, setTheme] = useState(localStorage.getItem("chatTheme") || "light");
   const [myPhoto, setMyPhoto] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [showGroupInfo, setShowGroupInfo] = useState(false);
@@ -51,8 +59,6 @@ export default function ChatPage() {
   const [searchText, setSearchText] = useState("");
   const [matchedIndexes, setMatchedIndexes] = useState([]);
   const [currentMatch, setCurrentMatch] = useState(0);
-  const [showBackup, setShowBackup] = useState(false);
-  const [chatMessages, setChatMessages] = useState([]);
   const [photoViewer, setPhotoViewer] = useState({
     open: false,
     photo: "",
@@ -120,21 +126,6 @@ export default function ChatPage() {
     document.body.setAttribute("data-theme", theme);
     localStorage.setItem("chatTheme", theme);
   }, [theme]);
-
-  useEffect(() => {
-    if (!token || !user?.email) return;
-    const syncKeys = async () => {
-      try {
-        const userKeys = await getOrGenerateUserKeys(user.email);
-        if (userKeys?.publicKey) {
-          await updatePublicKeyAPI(token, userKeys.publicKey);
-        }
-      } catch (err) {
-        console.error("Failed to sync E2EE public key:", err);
-      }
-    };
-    syncKeys();
-  }, [token, user]);
 
   useEffect(() => {
     if (!token) return;
@@ -284,41 +275,81 @@ export default function ChatPage() {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    if (!file.type.startsWith("image/")) {
-      alert("Please select an image file");
+    const supportedTypes = ["image/jpeg", "image/png", "image/webp"];
+    if (!supportedTypes.includes(file.type)) {
+      alert("Please select a JPG, PNG, or WebP image");
       event.target.value = "";
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const photoData = String(reader.result || "");
+    if (file.size > 5 * 1024 * 1024) {
+      alert("Profile photos must be smaller than 5 MB");
+      event.target.value = "";
+      return;
+    }
+
+    setPhotoDraft(file);
+    event.target.value = "";
+  };
+
+  const saveProfilePhoto = async (file, position = "50% 50%") => {
+    try {
+      const reader = new FileReader();
+      const sourceData = await new Promise((resolve, reject) => {
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const photoData = await new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => {
+          const size = Math.min(image.naturalWidth, image.naturalHeight);
+          const positionX = Number.parseFloat(position) / 100;
+          const sourceX = (image.naturalWidth - size) * positionX;
+          const canvas = document.createElement("canvas");
+          canvas.width = 512;
+          canvas.height = 512;
+          const context = canvas.getContext("2d");
+          if (!context) {
+            reject(new Error("Unable to prepare profile photo"));
+            return;
+          }
+          context.drawImage(image, sourceX, (image.naturalHeight - size) / 2, size, size, 0, 0, 512, 512);
+          resolve(canvas.toDataURL("image/jpeg", 0.9));
+        };
+        image.onerror = () => reject(new Error("Unable to read profile photo"));
+        image.src = sourceData;
+      });
       const data = await uploadProfilePhoto(token, photoData);
       if (data?.user?.photo) {
         setMyPhoto(data.user.photo);
+        setPhotoDraft(null);
         alert("Profile photo updated");
       } else {
         alert(data?.message || "Failed to upload profile photo");
       }
-      event.target.value = "";
-    };
-    reader.readAsDataURL(file);
+    } catch (error) {
+      alert(`Failed to upload profile photo: ${error.message}`);
+    }
   };
 
-  const handleShowAnalytics = async () => {
-    const data = await fetchAnalytics(token);
-    if (data?.message) {
-      alert(data.message);
-      return;
-    }
+  const handleRemovePhoto = async () => {
+      if (!window.confirm("Remove your profile photo?")) return;
+      try {
+        const data = await deleteProfilePhoto(token);
+        if (data?.user) {
+          setMyPhoto("");
+          alert("Profile photo removed");
+        } else {
+          alert(data?.message || "Failed to remove profile photo");
+        }
+      } catch (error) {
+        alert(`Failed to remove profile photo: ${error.message}`);
+      }
+  };
 
-    alert(
-      `Users: ${data.totalUsers}
-      Messages: ${data.totalMessages}
-      Blocks: ${data.totalBlocks}
-      My sent: ${data.mySent}
-      My received: ${data.myReceived}`
-    );
+  const handleShowAnalytics = () => {
+    setShowAnalytics(true);
   };
 
   const handleToggleBlock = () => {
@@ -591,15 +622,22 @@ export default function ChatPage() {
 
 
   return (
-    <div style={{ display: "flex", height: "100vh", width: "100vw" }}>
+    <div className="chat-page-container">
       <div id="toast"></div>
-      <Sidebar
-        selectedUser={selectedUser}
-        onSelectUser={setSelectedUser}
-        onlineUsers={onlineUsers}
-        socket={socket}
-        userStatusMap={userStatusMap}
-      />
+      <div className={`chat-card-frame ${selectedUser ? 'has-active-chat' : 'no-active-chat'}`}>
+        <Sidebar
+          onOpenProfile={() => setShowOwnProfile(true)}
+          profilePhoto={myPhoto}
+          selectedUser={selectedUser}
+          onSelectUser={setSelectedUser}
+          onlineUsers={onlineUsers}
+          socket={socket}
+          userStatusMap={userStatusMap}
+          onCallHistory={() => setShowCallHistory(true)}
+          onBackupRestore={() => setShowBackupRestore(true)}
+          onOpenAI={() => setShowAIAssistant(true)}
+          onAnalytics={handleShowAnalytics}
+        />
 
       <div className="chat-main" id="chatArea">
         {!selectedUser && (
@@ -615,6 +653,7 @@ export default function ChatPage() {
               selectedUser={selectedUser}
               statusText={selectedUser.isGroup ? "Group chat" : getStatusText(selectedUser.email)}
               isTyping={isTyping}
+              onBack={() => setSelectedUser(null)}
               onAudioCall={startAudioCall}
               onVideoCall={startVideoCall}
               onToggleBlock={handleToggleBlock}
@@ -623,18 +662,29 @@ export default function ChatPage() {
               onToggleTheme={handleToggleTheme}
               onPhoto={handleOpenPhotoPicker}
               onAnalytics={handleShowAnalytics}
+              onCallHistory={() => setShowCallHistory(true)}
+              onBackupRestore={() => setShowBackupRestore(true)}
+              onOpenAI={() => setShowAIAssistant(true)}
+              onContactInfo={() => setShowContactInfo(true)}
+              onRemovePhoto={handleRemovePhoto}
               onToggleSearch={() => setShowSearch(prev => !prev)}
               isBlocked={isBlocked}
               myPhoto={myPhoto}
               onShowGroupInfo={() => setShowGroupInfo(true)}
-              onBackup={() => setShowBackup(true)}
               onPhotoClick={() => {
                 if (!selectedUser) return;
                 const photo = selectedUser.isGroup
                   ? selectedUser.photo
                   : selectedUser.photo;
 
-                if (!photo) return;
+                if (!photo) {
+                  if (selectedUser.isGroup) {
+                    setShowGroupInfo(true);
+                  } else if (selectedUser.email !== "ai@chatapp.com") {
+                    setShowContactInfo(true);
+                  }
+                  return;
+                }
                 setPhotoViewer({
                   open: true,
                   photo,
@@ -653,9 +703,11 @@ export default function ChatPage() {
             />
 
             <Chat
+              key={`${selectedUser.isGroup ? selectedUser._id : selectedUser.email}-${refreshMessagesSignal}`}
               selectedUser={selectedUser}
               socket={socket}
               isBlocked={isBlocked}
+              refreshMessagesSignal={refreshMessagesSignal}
               showSearch={showSearch}
               setShowSearch={setShowSearch}
               searchText={searchText}
@@ -664,7 +716,6 @@ export default function ChatPage() {
               setMatchedIndexes={setMatchedIndexes}
               currentMatch={currentMatch}
               setCurrentMatch={setCurrentMatch}
-              onMessagesChange={setChatMessages}
 
             />
           </div>
@@ -678,16 +729,12 @@ export default function ChatPage() {
             onlineUsers={onlineUsers}
             userStatusMap={userStatusMap}
             onClose={() => setShowGroupInfo(false)}
+            onGroupLeft={() => {
+              setShowGroupInfo(false);
+              setSelectedUser(null);
+            }}
           />
         )}
-      {showBackup && (
-        <BackupModal
-          onClose={() => setShowBackup(false)}
-          messages={chatMessages}
-          selectedUser={selectedUser}
-        />
-      )}
-
       {photoViewer.open && (
         <PhotoViewer
           photo={photoViewer.photo}
@@ -701,6 +748,66 @@ export default function ChatPage() {
           }
         />
       )}
+      {showCallHistory && (
+        <CallHistoryModal
+          selectedUser={selectedUser}
+          onClose={() => setShowCallHistory(false)}
+        />
+      )}
+      {showContactInfo && selectedUser && !selectedUser.isGroup && (
+        <ContactInfoModal
+          contact={selectedUser}
+          isOnline={onlineUsers.includes(selectedUser.email)}
+          lastSeenText={getStatusText(selectedUser.email)}
+          isBlocked={isBlocked}
+          onBlockedChange={setIsBlocked}
+          onMessage={() => setShowContactInfo(false)}
+          onSearch={() => {
+            setShowContactInfo(false);
+            setShowSearch(true);
+          }}
+          onOpenPhotoViewer={(photo, name) => setPhotoViewer({ open: true, photo, name })}
+          onClose={() => setShowContactInfo(false)}
+        />
+      )}
+      {showOwnProfile && (
+        <ContactInfoModal
+          contact={{ ...user, photo: myPhoto }}
+          isOnline={true}
+          lastSeenText="Active now"
+          isBlocked={false}
+          canEditAbout
+          onMessage={() => setShowOwnProfile(false)}
+          onSearch={() => setShowOwnProfile(false)}
+          onClose={() => setShowOwnProfile(false)}
+        />
+      )}
+      {photoDraft && (
+        <ProfilePhotoUploadModal
+          file={photoDraft}
+          onSave={saveProfilePhoto}
+          onCancel={() => setPhotoDraft(null)}
+        />
+      )}
+      {showBackupRestore && (
+        <BackupRestoreModal
+          selectedUser={selectedUser}
+          onRestoreComplete={() => {
+            setRefreshMessagesSignal((signal) => signal + 1);
+          }}
+          onClose={() => setShowBackupRestore(false)}
+        />
+      )}
+      <AIAssistantModal
+        isOpen={showAIAssistant}
+        onClose={() => setShowAIAssistant(false)}
+        selectedUser={selectedUser}
+        socket={socket}
+      />
+      <ChatAnalyticsModal
+        isOpen={showAnalytics}
+        onClose={() => setShowAnalytics(false)}
+      />
       <IncomingCall
         onAccept={acceptCall}
         onReject={rejectCall}
@@ -736,10 +843,7 @@ export default function ChatPage() {
         socket={socket}
         selectedUser={selectedUser}
       />
-
-
-
-
+      </div>
     </div>
   );
 }

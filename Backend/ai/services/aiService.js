@@ -1,153 +1,53 @@
 import Groq from "groq-sdk";
-import dotenv from "dotenv";
-dotenv.config();
-import { codingSystemPrompt, summarizationPrompt, ragSystemPrompt, semanticSearchPrompt, taskExtractionPrompt, multiAgentPlannerPrompt, multiAgentExecutorPrompt } from "../prompts/systemPrompt.js";
 
-export const askAI = async (messages) => {
+// Chat models available on this Groq account, best first.
+// Fallbacks keep AI working if a model is ever decommissioned.
+const GROQ_MODELS = [
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+    "qwen/qwen3.8-27b"
+];
 
+const isAuthError = (err) => {
+    const raw = err?.response?.data?.error?.message || err?.message || String(err || "");
+    return /invalid api key|expired_api_key|unauthorized|api key not valid/i.test(raw);
+};
+
+export const askAI = async (messages, { temperature } = {}) => {
     const groq = new Groq({
         apiKey: process.env.GROQ_API_KEY
     });
 
-    const completion =
-        await groq.chat.completions.create({
-
-            model: "llama-3.3-70b-versatile",
-
-            messages
-
-        });
-
-    return completion.choices[0].message.content;
-};
-
-// Coding assistant — always prepends a strong system prompt
-export const askCodingAI = async (messages) => {
-
-    const groq = new Groq({
-        apiKey: process.env.GROQ_API_KEY
-    });
-
-    const completion = await groq.chat.completions.create({
-        model: "llama-3.3-70b-versatile",
-        messages: [
-            { role: "system", content: codingSystemPrompt },
-            ...messages
-        ]
-    });
-
-    return completion.choices[0].message.content;
-};
-
-// ── Chat Summarization ────────────────────────────────────────────
-export const summarizeChat = async (chatMessages) => {
-    const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-    const formatted = chatMessages
-        .map((m) => `${m.from}: ${m.message || "[media]"}`)
-        .join("\n");
-    const completion = await groq.chat.completions.create({
-        model: "llama-3.3-70b-versatile",
-        messages: [
-            { role: "system", content: summarizationPrompt },
-            { role: "user", content: `Summarize this conversation:\n\n${formatted}` }
-        ]
-    });
-    return completion.choices[0].message.content;
-};
-
-// ── RAG (Chat or Document context) ───────────────────────────────
-export const ragQuery = async (question, context) => {
-    const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-    const completion = await groq.chat.completions.create({
-        model: "llama-3.3-70b-versatile",
-        messages: [
-            { role: "system", content: ragSystemPrompt },
-            { role: "user", content: `Context:\n${context}\n\nQuestion: ${question}` }
-        ]
-    });
-    return completion.choices[0].message.content;
-};
-
-// ── Semantic Search ───────────────────────────────────────────────
-export const semanticSearchMessages = async (query, messages) => {
-    const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-    const numbered = messages
-        .map((m, i) => `[${i}] ${m.from}: ${m.message || "[media]"}`)
-        .join("\n");
-    const completion = await groq.chat.completions.create({
-        model: "llama-3.3-70b-versatile",
-        messages: [
-            { role: "system", content: semanticSearchPrompt },
-            { role: "user", content: `Messages:\n${numbered}\n\nQuery: ${query}` }
-        ]
-    });
-    const raw = completion.choices[0].message.content.trim();
-    try {
-        const jsonMatch = raw.match(/\[[\s\S]*\]/);
-        return jsonMatch ? JSON.parse(jsonMatch[0]) : [];
-    } catch {
-        return [];
+    let lastError = null;
+    for (const model of GROQ_MODELS) {
+        try {
+            const completion = await groq.chat.completions.create({
+                model,
+                messages,
+                ...(temperature !== undefined ? { temperature } : {})
+            });
+            return completion.choices[0]?.message?.content || "No response generated.";
+        } catch (err) {
+            // Auth errors affect every model – fail fast so the caller
+            // can surface a clear message instead of retrying blindly
+            if (isAuthError(err)) throw err;
+            lastError = err;
+        }
     }
+    throw lastError || new Error("AI request failed");
 };
 
-// ── Task Extraction ───────────────────────────────────────────────
-export const extractTasksFromChat = async (chatMessages) => {
-    const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-    const formatted = chatMessages
-        .map((m) => `${m.from}: ${m.message || "[media]"}`)
-        .join("\n");
-    const completion = await groq.chat.completions.create({
-        model: "llama-3.3-70b-versatile",
-        messages: [
-            { role: "system", content: taskExtractionPrompt },
-            { role: "user", content: `Extract tasks from this conversation:\n\n${formatted}` }
-        ]
-    });
-    const raw = completion.choices[0].message.content.trim();
-    try {
-        const jsonMatch = raw.match(/\[[\s\S]*\]/);
-        return jsonMatch ? JSON.parse(jsonMatch[0]) : [];
-    } catch {
-        return [];
+// Map raw provider errors to user-friendly messages (never leaks keys)
+export const describeAIError = (err) => {
+    const raw = err?.response?.data?.error?.message || err?.message || String(err || "");
+    if (/invalid api key|expired_api_key|api key not valid/i.test(raw)) {
+        return "The AI service is not configured correctly (invalid provider API key). Please contact the administrator.";
     }
+    if (/rate limit|too many requests/i.test(raw)) {
+        return "The AI service is busy right now. Please wait a moment and try again.";
+    }
+    if (/does not exist|model_not_found|decommissioned/i.test(raw)) {
+        return "The AI model is temporarily unavailable. Please try again later.";
+    }
+    return "The AI service is temporarily unavailable. Please try again.";
 };
-
-// ── Multi-Agent Orchestration ─────────────────────────────────────
-export const multiAgentOrchestrate = async (goal) => {
-    const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-
-    // Step 1: Planner agent — break goal into sub-tasks
-    const planCompletion = await groq.chat.completions.create({
-        model: "llama-3.3-70b-versatile",
-        messages: [
-            { role: "system", content: multiAgentPlannerPrompt },
-            { role: "user", content: `Goal: ${goal}` }
-        ]
-    });
-    const planRaw = planCompletion.choices[0].message.content.trim();
-    let subTasks = [];
-    try {
-        const jsonMatch = planRaw.match(/\[[\s\S]*\]/);
-        subTasks = jsonMatch ? JSON.parse(jsonMatch[0]) : [goal];
-    } catch {
-        subTasks = [goal];
-    }
-
-    // Step 2: Executor agent — run each sub-task
-    const results = [];
-    for (const subTask of subTasks) {
-        const execCompletion = await groq.chat.completions.create({
-            model: "llama-3.3-70b-versatile",
-            messages: [
-                { role: "system", content: multiAgentExecutorPrompt },
-                { role: "user", content: `Complete this task: ${subTask}` }
-            ]
-        });
-        results.push({
-            task: subTask,
-            result: execCompletion.choices[0].message.content
-        });
-    }
-    return { goal, subTasks, results };
-};
-

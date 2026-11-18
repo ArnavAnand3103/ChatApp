@@ -9,7 +9,7 @@ import StarredMessages from './pages/StarredMessages.jsx';
 
 export default function App(){
     const {token}=useAuth();
-    const isAuthenticated=Boolean(token);
+    const isAuthenticated=Boolean(token || sessionStorage.getItem("token"));
 
     return(
         <BrowserRouter>

@@ -1,23 +1,45 @@
 import express from "express";
-import { chatWithAI, generateImage, codeAssist, summarizeChatController, chatRAGController, documentRAGController, semanticSearchController, generateStickerController, editImageController, extractTasksController, multiAgentController } from "../controllers/aiController.js";
+import {
+    chatWithAI,
+    getAIHistory,
+    generateImage,
+    editImage,
+    uploadDocumentRAG,
+    askDocumentRAG,
+    getDocumentStatus,
+    clearDocumentIndex,
+    chatRAG,
+    semanticSearch,
+    extractTasks
+} from "../controllers/aiController.js";
 import { verifyToken } from "../../middelware/auth.js";
 
 const router = express.Router();
 
-// ── Existing routes (do not remove) ──────────────────────────────
-router.post("/chat", verifyToken, chatWithAI);
-router.post("/image", verifyToken, generateImage);
-router.post("/code", verifyToken, codeAssist);
+// All AI endpoints are secured with verifyToken
+router.use(verifyToken);
 
-// ── New AI feature routes ─────────────────────────────────────────
-router.post("/summarize", verifyToken, summarizeChatController);
-router.post("/rag", verifyToken, chatRAGController);
-router.post("/doc-rag", verifyToken, documentRAGController);
-router.post("/semantic-search", verifyToken, semanticSearchController);
-router.post("/sticker", verifyToken, generateStickerController);
-router.post("/edit-image", verifyToken, editImageController);
-router.post("/extract-tasks", verifyToken, extractTasksController);
-router.post("/multi-agent", verifyToken, multiAgentController);
+// 1. AI Chat Assistant
+router.post("/chat", chatWithAI);
+router.get("/chat/history", getAIHistory);
 
+// 2. AI Image Generation
+router.post("/image", generateImage);
+router.post("/image/edit", editImage);
+
+// 3. Document RAG
+router.post("/document/upload", uploadDocumentRAG);
+router.post("/document/query", askDocumentRAG);
+router.get("/document/status", getDocumentStatus);
+router.delete("/document", clearDocumentIndex);
+
+// 4. Chat RAG
+router.post("/chat-rag", chatRAG);
+
+// 5. Semantic Search
+router.post("/semantic-search", semanticSearch);
+
+// 6. Task Extraction
+router.post("/tasks/extract", extractTasks);
 
 export default router;

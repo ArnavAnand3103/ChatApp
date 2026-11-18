@@ -9,13 +9,24 @@ const userSchema = new mongoose.Schema({
    },
    password:{
     type:String,
-    required:true
+    default:""
    },
-   publicKey: {
-    type: String,
-    default: ""
-},
-
+   googleId:{
+    type:String,
+    default:""
+   },
+   authProvider:{
+    type:String,
+    default:"local"
+   },
+   phone:{
+    type:String,
+    default:""
+   },
+   about:{
+    type:String,
+    default:"Hey there! I am using Chat App."
+   },
    photo:{
       type:String,
       default:""

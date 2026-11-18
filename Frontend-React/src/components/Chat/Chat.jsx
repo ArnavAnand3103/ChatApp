@@ -1,20 +1,25 @@
 import { useEffect, useState } from 'react';
 import Message from './Message';
-import { fetchMessages, fetchGroupMessages, fetchGroupInfo, chatWithAI, generateImage, codeAssist, fetchUserPublicKeyAPI } from '../../services/api';
-import { encryptE2EEMessage, decryptE2EEMessage, getOrGenerateUserKeys, decryptGroupKey, encryptGroupMessage, decryptGroupMessage } from '../../utils/crypto';
+import { fetchMessages, fetchGroupMessages, chatWithAI, generateImage } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 import { showNotification } from '../../utils/notification';
 import {useRef} from 'react';
 import { getCurrentLocation } from "../../utils/location";
 import IncomingCall from "../Call/IncomingCall";
-import AIPanelModal from './AIPanelModal';
+import MediaModal from "./MediaModal";
+import { e2eeAvailable, encryptPrivateForUser, decryptPrivateForMe, encryptGroupForChat, decryptGroupForMe, ensureGroupSenderKey, processGroupSenderKey } from "../../services/e2ee";
 
-
+const formatFileSize = (bytes = 0) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
 
 export default function Chat({
     selectedUser,
     socket,
     isBlocked,
+    refreshMessagesSignal,
     showSearch: externalShowSearch,
     setShowSearch: externalSetShowSearch,
     searchText: externalSearchText,
@@ -22,19 +27,12 @@ export default function Chat({
     matchedIndexes: externalMatchedIndexes,
     setMatchedIndexes: externalSetMatchedIndexes,
     currentMatch: externalCurrentMatch,
-    setCurrentMatch: externalSetCurrentMatch,
-    onMessagesChange
+    setCurrentMatch: externalSetCurrentMatch
 }) {
 
-    const { user, token } = useAuth();
+    const { user, token, e2eeState } = useAuth();
 
     const [messages, setMessages] = useState([]);
-
-    // propagate messages to parent (for Backup modal)
-    useEffect(() => {
-        if (onMessagesChange) onMessagesChange(messages);
-    }, [messages, onMessagesChange]);
-
     const [showLocationMenu, setShowLocationMenu] = useState(false);
     const [showLiveLocationModal, setShowLiveLocationModal] = useState(false);
     const [isSharingLiveLocation, setIsSharingLiveLocation] = useState(false);
@@ -51,6 +49,11 @@ export default function Chat({
 
     const [file, setFile] = useState(null);
     const [preview, setPreview] = useState(null);
+    const [files, setFiles] = useState([]);
+    const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
+    const [uploadingMedia, setUploadingMedia] = useState(false);
+    const [uploadProgress, setUploadProgress] = useState(0);
+    const [documentPreview, setDocumentPreview] = useState(null);
 
     const [isRecording, setIsRecording] = useState(false);
     const [recordingTime, setRecordingTime] = useState(0);
@@ -58,15 +61,7 @@ export default function Chat({
 
     const [voiceBlob, setVoiceBlob] = useState(null);
     const [voicePreview, setVoicePreview] = useState("");
-
     const [aiTyping, setAiTyping] = useState(false);
-    const [showAIModal, setShowAIModal] = useState(false);
-    const [currentGroupKey, setCurrentGroupKey] = useState(null);
-    const currentGroupKeyRef = useRef(null);
-
-    useEffect(() => {
-        currentGroupKeyRef.current = currentGroupKey;
-    }, [currentGroupKey]);
 
     const mediaRecorderRef = useRef(null);
     const audioChunksRef = useRef([]);
@@ -75,12 +70,39 @@ export default function Chat({
     const liveLocationWatchRef = useRef(null);
     const liveLocationIdRef = useRef(null);
     const liveLocationTimerRef = useRef(null);
-   
 
-    const bottomRef=useRef(null);
-    const messageRefs=useRef([]);
-    const channelRef=useRef(null);
-    const typingTimeoutRef=useRef(null);
+    const bottomRef = useRef(null);
+    const messageRefs = useRef([]);
+    const typingTimeoutRef = useRef(null);
+
+    const canE2EE = Boolean(e2eeState?.messageEncryptionEnabled && e2eeAvailable() && user?.email);
+
+    const decryptIncoming = async (msg) => {
+        if (!msg || !msg.isEncrypted || !msg.ciphertext) return msg;
+        try {
+            if (msg.groupId || (msg.to && selectedUser?.isGroup && String(msg.to) === String(selectedUser._id))) {
+                const plain = await decryptGroupForMe({ myEmail: user.email, senderEmail: msg.from || msg.fromEmail, senderDeviceId: msg.senderDeviceId, ciphertext: msg.ciphertext });
+                const inner = JSON.parse(plain);
+                return { ...msg, ...inner, isEncrypted: true, _decrypted: true };
+            } else {
+                const other = (msg.from === user.email || msg.fromEmail === user.email) ? (msg.to || msg.toEmail) : (msg.from || msg.fromEmail);
+                if (msg.from === user.email || msg.fromEmail === user.email) {
+                    // own sent encrypted: we stored plaintext locally in optimistic update usually, but if loaded from server decrypt attempt may fail without self-session; keep as-is if already has content
+                    if (msg.message || msg.messageType !== 'encrypted') return { ...msg, _decrypted: true };
+                }
+                const plain = await decryptPrivateForMe({ myEmail: user.email, fromEmail: other, senderDeviceId: msg.senderDeviceId, ciphertext: msg.ciphertext, ciphertextType: msg.ciphertextType });
+                const inner = JSON.parse(plain);
+                return { ...msg, ...inner, isEncrypted: true, _decrypted: true };
+            }
+        } catch (e) {
+            return { ...msg, message: "🔒 Encrypted message (cannot decrypt)", messageType: "text", _decryptError: true };
+        }
+    };
+
+    const decryptMany = async (list) => {
+        if (!Array.isArray(list)) return list;
+        return Promise.all(list.map(decryptIncoming));
+    };
     const isSearchVisible = externalShowSearch ?? showSearch;
     const searchTextValue = externalSearchText ?? searchText;
     const matchedIndexesValue = externalMatchedIndexes ?? matchedIndexes;
@@ -91,6 +113,7 @@ export default function Chat({
             externalSetShowSearch(nextValue);
             return;
         }
+
         setShowSearch(nextValue);
     };
 
@@ -118,29 +141,6 @@ export default function Chat({
         setCurrentMatch(nextValue);
     };
 
-    useEffect(()=>{
-        const channel=new BroadcastChannel("project2-chat-sync");
-        channelRef.current=channel;
-
-        channel.onmessage=(event)=>{
-            const payload=event.data;
-            if(!payload||payload.type!=="incoming"||!payload.message) return;
-            const msg=payload.message;
-            const from=msg.fromEmail||msg.from;
-            const to=msg.toEmail||msg.to;
-            const isCurrentChat=from===selectedUser?.email||to===selectedUser?.email;
-            if(isCurrentChat){
-                setMessages(prev => {
-                    const isDuplicate = prev.some(m => (m._id && m._id === msg._id) || (m.clientMessageId && m.clientMessageId === msg.clientMessageId));
-                    if (isDuplicate) return prev;
-                    return [...prev, msg];
-                });
-            }
-        };
-
-        return ()=>channel.close();
-    },[selectedUser]);
-
     const markMessageSeen = (messageList = messages) => {
         if (!socket || !selectedUser) return;
 
@@ -160,70 +160,27 @@ export default function Chat({
         if (!selectedUser) return;
 
         const loadMessages = async () => {
-            if (selectedUser?.isGroup) {
-                let groupKeys = selectedUser.groupKeys || {};
-                let groupInfo = null;
-                if (!groupKeys || Object.keys(groupKeys).length === 0) {
-                    try {
-                        groupInfo = await fetchGroupInfo(token, selectedUser._id);
-                        groupKeys = groupInfo?.groupKeys || {};
-                    } catch (e) {
-                        console.error("Failed to fetch group info:", e);
-                    }
-                }
-                const userKeys = await getOrGenerateUserKeys(user?.email);
-                let userEncKey = groupKeys[user.email] || (groupKeys.get ? groupKeys.get(user.email) : null);
-                let decGroupKey = null;
-                if (userEncKey && userKeys?.privateKey) {
-                    decGroupKey = await decryptGroupKey(userEncKey, userKeys.privateKey);
-                }
-                setCurrentGroupKey(decGroupKey);
-                currentGroupKeyRef.current = decGroupKey;
-
-                const data = await fetchGroupMessages(token, selectedUser._id);
-                const decryptedGroupMsgs = await Promise.all(
-                    (data || []).map(async (msg) => {
-                        let m = { ...msg };
-                        if (m.message && typeof m.message === "string" && m.message.startsWith("[E2EE_GROUP]:")) {
-                            m.message = await decryptGroupMessage(m.message, decGroupKey);
-                        }
-                        if (m.mediaUrl && typeof m.mediaUrl === "string" && m.mediaUrl.startsWith("[E2EE_GROUP]:")) {
-                            m.mediaUrl = await decryptGroupMessage(m.mediaUrl, decGroupKey);
-                        }
-                        return m;
-                    })
+            //Group selected
+            if(selectedUser?.isGroup){
+                const data=await fetchGroupMessages(
+                    token,
+                    selectedUser._id
                 );
-                setMessages(decryptedGroupMsgs);
+                setMessages(await decryptMany(data || []));
                 return;
             }
-
-            setCurrentGroupKey(null);
-            currentGroupKeyRef.current = null;
-
             const data = await fetchMessages(token, selectedUser.email);
-            const userKeys = await getOrGenerateUserKeys(user?.email);
-            const decryptedData = await Promise.all(
-                (data || []).map(async (msg) => {
-                    let m = { ...msg };
-                    if (m.message && typeof m.message === "string" && m.message.startsWith("[E2EE]:")) {
-                        m.message = await decryptE2EEMessage(m.message, userKeys?.privateKey);
-                    }
-                    if (m.mediaUrl && typeof m.mediaUrl === "string" && m.mediaUrl.startsWith("[E2EE]:")) {
-                        m.mediaUrl = await decryptE2EEMessage(m.mediaUrl, userKeys?.privateKey);
-                    }
-                    return m;
-                })
-            );
-            setMessages(decryptedData);
+            const dec = await decryptMany(data || []);
+            setMessages(dec);
             setStatusMap({});
 
             setTimeout(() => {
-                markMessageSeen(decryptedData);
+                markMessageSeen(dec);
             }, 200);
         };
 
         loadMessages();
-    }, [selectedUser, token]);
+    }, [selectedUser, token, refreshMessagesSignal]);
 
     useEffect(() => {
         if (!socket) return;
@@ -231,63 +188,42 @@ export default function Chat({
         const handler = async (msg) => {
             const from = msg.fromEmail || msg.from;
             const to = msg.toEmail || msg.to;
-            let processedMsg = { ...msg };
-
-            if (processedMsg.message && typeof processedMsg.message === "string") {
-                if (processedMsg.message.startsWith("[E2EE]:")) {
-                    const userKeys = await getOrGenerateUserKeys(user?.email);
-                    processedMsg.message = await decryptE2EEMessage(processedMsg.message, userKeys?.privateKey);
-                } else if (processedMsg.message.startsWith("[E2EE_GROUP]:")) {
-                    processedMsg.message = await decryptGroupMessage(processedMsg.message, currentGroupKeyRef.current);
-                }
-            }
-
-            if (processedMsg.mediaUrl && typeof processedMsg.mediaUrl === "string") {
-                if (processedMsg.mediaUrl.startsWith("[E2EE]:")) {
-                    const userKeys = await getOrGenerateUserKeys(user?.email);
-                    processedMsg.mediaUrl = await decryptE2EEMessage(processedMsg.mediaUrl, userKeys?.privateKey);
-                } else if (processedMsg.mediaUrl.startsWith("[E2EE_GROUP]:")) {
-                    processedMsg.mediaUrl = await decryptGroupMessage(processedMsg.mediaUrl, currentGroupKeyRef.current);
-                }
-            }
-
             if (
                 from === selectedUser?.email ||
-                to === selectedUser?.email ||
-                (selectedUser?.isGroup && (to === selectedUser._id || from === selectedUser._id))
+                to === selectedUser?.email
             ) {
+                const dmsg = await decryptIncoming(msg);
                 setMessages(prev => {
                     const duplicateIndex = prev.findIndex(m =>
-                        (m._id && processedMsg._id && String(m._id) === String(processedMsg._id)) ||
-                        (m.clientMessageId && processedMsg.clientMessageId && m.clientMessageId === processedMsg.clientMessageId)
+                        (m._id && dmsg._id && String(m._id) === String(dmsg._id)) ||
+                        (m.clientMessageId && dmsg.clientMessageId && m.clientMessageId === dmsg.clientMessageId) ||
+                        (!m._id && m.from === dmsg.from && m.message === dmsg.message && m.messageType === dmsg.messageType)
                     );
 
                     if (duplicateIndex !== -1) {
                         const updated = [...prev];
                         updated[duplicateIndex] = {
                             ...updated[duplicateIndex],
-                            ...processedMsg,
-                            clientMessageId: updated[duplicateIndex].clientMessageId || processedMsg.clientMessageId,
-                            createdAt: updated[duplicateIndex].createdAt || processedMsg.createdAt
+                            ...dmsg,
+                            clientMessageId: updated[duplicateIndex].clientMessageId || dmsg.clientMessageId,
+                            createdAt: updated[duplicateIndex].createdAt || dmsg.createdAt
                         };
                         return updated;
                     }
 
-                    return [...prev, processedMsg];
+                    return [...prev, dmsg];
                 });
             }
             else {
-                showNotification("New Message", processedMsg.messageType === "media" ? "Sent a media message" : processedMsg.message);
+                showNotification("New Message", msg.isEncrypted ? "Encrypted message" : (msg.messageType === "media" ? "Sent a media message" : msg.message));
             }
 
-            if (processedMsg.clientMessageId) {
+            if (msg.clientMessageId) {
                 setStatusMap(prev => ({
                     ...prev,
-                    [processedMsg.clientMessageId]: processedMsg.status || "delivered"
+                    [msg.clientMessageId]: msg.status || "delivered"
                 }));
             }
-
-            channelRef.current?.postMessage({type:"incoming",message:processedMsg});
         };
 
         const statusHandler = ({ status, clientMessageId }) => {
@@ -303,29 +239,17 @@ export default function Chat({
                 setMessages([]);
             }
         };
-
-        const groupKeyUpdatedHandler = async ({ groupId, groupKeys }) => {
-            if (selectedUser?.isGroup && selectedUser._id === groupId) {
-                const userKeys = await getOrGenerateUserKeys(user?.email);
-                let userEncKey = groupKeys[user.email] || (groupKeys.get ? groupKeys.get(user.email) : null);
-                if (userEncKey && userKeys?.privateKey) {
-                    const decKey = await decryptGroupKey(userEncKey, userKeys.privateKey);
-                    setCurrentGroupKey(decKey);
-                    currentGroupKeyRef.current = decKey;
-                }
-            }
-        };
+        
+   
 
         socket.on("receiveMessage", handler);
         socket.on("messageStatus", statusHandler);
         socket.on("chatDeleted", chatDeletedHandler);
-        socket.on("groupKeyUpdated", groupKeyUpdatedHandler);
 
         return () => {
             socket.off("receiveMessage", handler);
             socket.off("messageStatus", statusHandler);
             socket.off("chatDeleted", chatDeletedHandler);
-            socket.off("groupKeyUpdated", groupKeyUpdatedHandler);
         };
 
     }, [socket, selectedUser]);
@@ -523,26 +447,29 @@ socket.on("liveLocationStopped", ({ liveLocationId,from }) => {
     useEffect(()=>{
         if(!socket) return;
 
-        const handler = async (msg) => {
-            if (msg.groupId != null && String(msg.groupId) === String(selectedUser?._id)) {
-                let processedMsg = { ...msg };
-                if (processedMsg.message && typeof processedMsg.message === "string" && processedMsg.message.startsWith("[E2EE_GROUP]:")) {
-                    processedMsg.message = await decryptGroupMessage(processedMsg.message, currentGroupKeyRef.current);
-                }
-                if (processedMsg.mediaUrl && typeof processedMsg.mediaUrl === "string" && processedMsg.mediaUrl.startsWith("[E2EE_GROUP]:")) {
-                    processedMsg.mediaUrl = await decryptGroupMessage(processedMsg.mediaUrl, currentGroupKeyRef.current);
-                }
-                setMessages(prev => {
-                    const isDuplicate = prev.some(m => m._id && m._id === msg._id?.toString());
-                    if (isDuplicate) return prev;
-                    return [...prev, processedMsg];
+        const handler=async (msg)=>{
+            if(msg.groupId!=null&&String(msg.groupId)===String(selectedUser?._id)){
+                const dmsg = await decryptIncoming({ ...msg, groupId: msg.groupId });
+                setMessages(prev=>{
+                    const isDuplicate=prev.some(m=>m._id&&m._id===msg._id?.toString());
+                    if(isDuplicate) return prev;
+                    return [...prev,dmsg];
                 });
             }
         };
-        socket.on("receiveGroupMessage", handler);
+        socket.on("receiveGroupMessage",handler);
 
-        return () => socket.off("receiveGroupMessage", handler);
-    }, [socket, selectedUser]);
+        const skHandler = async (payload) => {
+            try {
+                if (!payload || !payload.groupId) return;
+                if (payload.from === user.email) return;
+                await processGroupSenderKey({ myEmail: user.email, senderEmail: payload.from, senderDeviceId: payload.senderDeviceId, distributionMessage: payload.distributionMessage, distributionId: payload.distributionId, groupId: payload.groupId });
+            } catch (e) { console.warn("sender key process failed", e); }
+        };
+        socket.on("groupSenderKeyDistribution", skHandler);
+
+        return()=>{ socket.off("receiveGroupMessage",handler); socket.off("groupSenderKeyDistribution", skHandler); };
+    },[socket,selectedUser, user?.email])
     useEffect(()=>{
         if(!searchTextValue.trim()){
             setMatchedList([]);
@@ -784,10 +711,109 @@ const stopLiveLocation = () => {
 
 };
 
-const sendMessage = async () => {
+    const readMediaFile = (selectedFile) => new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(new Error("Failed to read media"));
+        reader.readAsDataURL(selectedFile);
+    });
 
-    console.log("Selected User:", selectedUser);
-    console.log("isAI:", selectedUser?.isAI);
+    const getMediaType = (selectedFile) => {
+        if (selectedFile.type.startsWith("image")) return "image";
+        if (selectedFile.type.startsWith("video")) return "video";
+        if (selectedFile.type.startsWith("audio")) return "audio";
+        return "document";
+    };
+
+    const buildPlainPayload = (base) => JSON.stringify({
+        message: base.message || "",
+        messageType: base.messageType || "text",
+        mediaUrl: base.mediaUrl || "",
+        fileName: base.fileName || "",
+        replyText: base.replyText || "",
+        replySender: base.replySender || "",
+        latitude: base.latitude ?? null,
+        longitude: base.longitude ?? null,
+        locationName: base.locationName || "",
+        isLive: !!base.isLive,
+        liveLocationId: base.liveLocationId || "",
+        expiresAt: base.expiresAt ?? null
+    });
+
+    const sendPrivateEncrypted = async (msgObj) => {
+        const plaintext = buildPlainPayload(msgObj);
+        const enc = await encryptPrivateForUser({ token, fromEmail: user.email, toEmail: selectedUser.email, plaintext });
+        socket.emit("privateMessage", {
+            to: selectedUser.email,
+            clientMessageId: msgObj.clientMessageId,
+            replyTo: msgObj.replyTo || null,
+            forwarded: !!msgObj.forwarded,
+            isEncrypted: true,
+            encryptionVersion: 1,
+            ciphertext: enc.ciphertext,
+            ciphertextType: enc.ciphertextType,
+            senderDeviceId: enc.senderDeviceId,
+            recipientDeviceId: enc.recipientDeviceId,
+            encryptedPayload: null
+        });
+        setMessages(prev => [...prev, { ...msgObj, from: user.email, createdAt: new Date(), isEncrypted: true, _decrypted: true }]);
+    };
+
+    const sendGroupEncrypted = async (groupId, msgObj) => {
+        const ensured = await ensureGroupSenderKey({ myEmail: user.email, groupId });
+        if (ensured.created && ensured.distributionMessage) {
+            socket.emit("groupSenderKeyDistribution", {
+                groupId,
+                distributionId: ensured.distributionId,
+                distributionMessage: ensured.distributionMessage,
+                senderDeviceId: await (async()=>{ try { return (await window.chatAppNative.ensureE2EEDevice(user.email)).deviceId; } catch { return null; } })()
+            });
+        }
+        const plaintext = buildPlainPayload(msgObj);
+        const enc = await encryptGroupForChat({ myEmail: user.email, groupId, plaintext });
+        socket.emit("groupMessage", {
+            groupId,
+            clientMessageId: msgObj.clientMessageId,
+            replyTo: msgObj.replyTo || null,
+            forwarded: !!msgObj.forwarded,
+            isEncrypted: true,
+            encryptionVersion: 1,
+            ciphertext: enc.ciphertext,
+            ciphertextType: enc.ciphertextType,
+            senderDeviceId: enc.senderDeviceId,
+            encryptedPayload: { distributionId: enc.distributionId }
+        });
+        // group messages come back via socket; optimistic add for UX
+        setMessages(prev => [...prev, { ...msgObj, from: user.email, to: groupId, groupId, createdAt: new Date(), isEncrypted: true, _decrypted: true }]);
+    };
+
+    const sendAdditionalFiles = async (additionalFiles) => {
+        for (let index = 0; index < additionalFiles.length; index += 1) {
+            const queuedFile = additionalFiles[index];
+            const mediaUrl = await readMediaFile(queuedFile);
+            const messageType = getMediaType(queuedFile);
+            const clientMessageId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+            const msgBase = { message: "", mediaUrl, messageType, fileName: queuedFile.name, clientMessageId };
+            if (selectedUser?.isGroup) {
+                if (canE2EE) {
+                    await sendGroupEncrypted(selectedUser._id, msgBase);
+                } else {
+                    socket.emit("groupMessage", { groupId: selectedUser._id, ...msgBase });
+                }
+            } else {
+                if (canE2EE) {
+                    await sendPrivateEncrypted({ ...msgBase, to: selectedUser.email });
+                } else {
+                    const message = { to: selectedUser.email, ...msgBase };
+                    socket.emit("privateMessage", message);
+                    setMessages((previous) => [...previous, { ...message, from: user.email, createdAt: new Date() }]);
+                }
+            }
+            setUploadProgress(Math.round(((index + 1) / additionalFiles.length) * 100));
+        }
+    };
+
+const sendMessage = async () => {
 
     if (editingMessage) {
 
@@ -803,216 +829,155 @@ const sendMessage = async () => {
     }
 
     // ---------------- AI CHAT ----------------
+    if (selectedUser?.email === "ai@chatapp.com") {
+        if (!text.trim()) return;
+        const userMsg = text;
+        setText("");
+        setMessages(prev => [
+            ...prev,
+            {
+                from: user.email,
+                to: selectedUser.email,
+                message: userMsg,
+                createdAt: new Date(),
+                messageType: "text"
+            }
+        ]);
 
-if (selectedUser?.email === "ai@chatapp.com") {
-        console.log("✅ AI block entered");
+        const lowerPrompt = userMsg.toLowerCase();
+        const imageKeywords = ["generate", "draw", "paint", "image", "picture", "photo", "logo", "poster", "wallpaper"];
+        const isImageReq = imageKeywords.some(k => lowerPrompt.includes(k));
 
-    if (!text.trim()) return;
+        setAiTyping(true);
+        try {
+            if (isImageReq) {
+                const res = await generateImage(userMsg);
+                setAiTyping(false);
+                setMessages(prev => [
+                    ...prev,
+                    {
+                        from: selectedUser.email,
+                        to: user.email,
+                        mediaUrl: res.imageUrl,
+                        message: "",
+                        createdAt: new Date(),
+                        messageType: "image"
+                    }
+                ]);
+                return;
+            }
 
-    // Show user's message immediately
-    setMessages(prev => [
-        ...prev,
-        {
-            from: user.email,
-            to: selectedUser.email,
+            const res = await chatWithAI(userMsg);
+            await new Promise(r => setTimeout(r, 600));
+            setAiTyping(false);
+            setMessages(prev => [
+                ...prev,
+                {
+                    from: selectedUser.email,
+                    to: user.email,
+                    message: res.reply || res.message || "Hello! I am your AI Assistant. How can I assist you?",
+                    createdAt: new Date(),
+                    messageType: "text"
+                }
+            ]);
+        } catch (err) {
+            setAiTyping(false);
+            console.error("AI Assistant Error:", err);
+            setMessages(prev => [
+                ...prev,
+                {
+                    from: selectedUser.email,
+                    to: user.email,
+                    message: "Sorry, I encountered an error: " + (err.message || "Something went wrong"),
+                    createdAt: new Date(),
+                    messageType: "text"
+                }
+            ]);
+        }
+        return;
+    }
+
+    const queuedFiles = files.length ? files : (file ? [file] : []);
+    if (selectedUser?.isGroup) {
+        if (!text.trim() && !queuedFiles.length) return;
+
+        let mediaUrl = "";
+        let messageType = "text";
+
+        if (file) {
+            mediaUrl = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(String(reader.result || ""));
+                reader.onerror = () => reject(new Error("Failed to read media"));
+                reader.readAsDataURL(file);
+            });
+
+            if (file.type.startsWith("image")) {
+                messageType = "image";
+            } else if (file.type.startsWith("video")) {
+                messageType = "video";
+            } else if (file.type.startsWith("audio")) {
+                messageType = "audio";
+            } else {
+                messageType = "document";
+            }
+        }
+
+        const replyData = {
+            replyTo: replyMessage?._id || null,
+            replyText:
+                replyMessage?.messageType === "voice"
+                    ? "🎤 Voice message"
+                : replyMessage?.messageType === "image"
+                    ? "🖼 Photo"
+                : replyMessage?.messageType === "video"
+                    ? "🎥 Video"
+                : replyMessage?.messageType === "document"
+                    ? `📄 ${replyMessage.fileName || "Document"}`
+                : replyMessage?.messageType === "location"
+                    ? (replyMessage?.isLive ? "🌍 Live Location" : "📍 Current Location")
+                : replyMessage?.message || "",
+            replySender: replyMessage?.user || replyMessage?.from || ""
+        };
+
+        const groupBase = {
             message: text,
-            createdAt: new Date(),
-            messageType: "text"
-        }
-    ]);
-const userMessage = text;
-setText("");
+            mediaUrl,
+            messageType,
+            fileName: file?.name || "",
+            clientMessageId: Date.now().toString(),
+            ...replyData
+        };
 
-const lowerPrompt = userMessage.toLowerCase();
-
-const imageKeywords = [
-    "generate",
-    "draw",
-    "paint",
-    "image",
-    "picture",
-    "photo",
-    "logo",
-    "poster",
-    "wallpaper"
-];
-
-const isImageRequest = imageKeywords.some(keyword =>
-    lowerPrompt.includes(keyword)
-);
-
-setAiTyping(true);
-try {
-
-    if (isImageRequest) {
-         const token = sessionStorage.getItem("token");
-    if (!token) {
-        alert("Session expired. Please log in again to generate images.");
-        return;
-    }
-
-        const res = await generateImage(userMessage);
-        console.log(res);
-        console.log(res.imageUrl);
-
-        setAiTyping(false);
-
-        setMessages(prev => [
-            ...prev,
-            {
-                from: selectedUser.email,
-                to: user.email,
-                mediaUrl: res.imageUrl,
-                message:"",
-                createdAt: new Date(),
-                messageType: "image"
-            }
-        ]);
-
-        return;
-    }
-
-    // ── Coding Assistant ────────────────────────────────────────────
-    const codingKeywords = [
-        "explain", "fix", "debug", "bug", "error", "code",
-        "function", "class", "syntax", "why is", "what does",
-        "how to", "write a", "create a", "implement", "refactor",
-        "optimize", "review", "javascript", "python", "java",
-        "c++", "typescript", "html", "css", "sql", "api", "async"
-    ];
-    const isCodeRequest = codingKeywords.some(kw => lowerPrompt.includes(kw));
-
-    if (isCodeRequest) {
-
-        const res = await codeAssist(userMessage);
-
-        await new Promise(resolve => setTimeout(resolve, 800));
-
-        setAiTyping(false);
-
-        setMessages(prev => [
-            ...prev,
-            {
-                from: selectedUser.email,
-                to: user.email,
-                message: res.reply,
-                createdAt: new Date(),
-                messageType: "code"
-            }
-        ]);
-
-        return;
-    }
-
-    const res = await chatWithAI(userMessage);
-
-    // Small delay so it feels natural
-    await new Promise(resolve => setTimeout(resolve, 1500));
-
-    setAiTyping(false);
-
-    setMessages(prev => [
-        ...prev,
-        {
-            from: selectedUser.email,
-            to: user.email,
-            message: res.reply,
-            createdAt: new Date(),
-            messageType: "text"
-        }
-    ]);
-
-} catch (err) {
-    setAiTyping(false);
-
-    console.error("Frontend Error:", err);
-
-    if (err.response) {
-        console.log(err.response);
-    }
-
-    alert(err.message);
-}
-
-    return;
-}
-
- if (selectedUser?.isGroup) {
-    if (!text.trim() && !file) return;
-
-    let mediaUrl = "";
-    let messageType = "text";
-    if (file) {
-        mediaUrl = await new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(String(reader.result || ""));
-            reader.onerror = () => reject(new Error("Failed to read media"));
-            reader.readAsDataURL(file);
-        });
-        if (file.type.startsWith("image")) {
-            messageType = "image";
-        } else if (file.type.startsWith("video")) {
-            messageType = "video";
+        if (canE2EE) {
+            try { await sendGroupEncrypted(selectedUser._id, groupBase); }
+            catch (e) { alert("E2EE send failed: " + (e?.message || e)); return; }
         } else {
-            messageType = "document";
+            socket.emit("groupMessage", {
+                groupId: selectedUser._id,
+                ...groupBase
+            });
         }
+        setUploadingMedia(true);
+        setUploadProgress(0);
+        try {
+            await sendAdditionalFiles(queuedFiles.slice(1));
+        } finally {
+            setUploadingMedia(false);
+            setUploadProgress(100);
+        }
+
+        setReplyMessage(null);
+        setText("");
+        setFile(null);
+        setPreview(null);
+        setFiles([]);
+        return;
     }
-
-    let outgoingText = text;
-    let outgoingMediaUrl = mediaUrl;
-    if (currentGroupKeyRef.current) {
-        if (text.trim()) {
-            outgoingText = await encryptGroupMessage(text, currentGroupKeyRef.current);
-        }
-        if (mediaUrl) {
-            outgoingMediaUrl = await encryptGroupMessage(mediaUrl, currentGroupKeyRef.current);
-        }
-    }
-
-  const replyData = {
-        replyTo: replyMessage?._id || null,
-
-        replyText:
-            replyMessage?.messageType === "voice"
-                ? "🎤 Voice message"
-            : replyMessage?.messageType === "image"
-                ? "🖼 Photo"
-            : replyMessage?.messageType === "video"
-                ? "🎥 Video"
-            : replyMessage?.messageType === "document"
-                ? `📄 ${replyMessage.fileName || "Document"}`
-            : replyMessage?.messageType === "location"
-        ? (
-            replyMessage?.isLive
-                ? "🌍 Live Location"
-                : "📍 Current Location"
-          )
-           : replyMessage?.message || "",
-
-        replySender: replyMessage?.user || ""
-    };
-
-    socket.emit("groupMessage", {
-        groupId: selectedUser._id,
-        message: outgoingText,
-        mediaUrl: outgoingMediaUrl,
-        messageType,
-        fileName: file?.name || "",
-        ...replyData
-    });
-
-   
-
-    setReplyMessage(null);
-    setText("");
-    setFile(null);
-    setPreview(null);
-    return;
-}
 
     if (isBlocked) return;
 
-    if (!text.trim() && !file) return;
+    if (!text.trim() && !queuedFiles.length) return;
 
 
        
@@ -1039,38 +1004,19 @@ if (file) {
     else if (file.type.startsWith("video")) {
         messageType = "video";
     }
+    else if (file.type.startsWith("audio")) {
+        messageType = "audio";
+    }
     else {
         messageType = "document";
     }
 }
 
-        let outgoingText = text;
-        let outgoingMediaUrl = mediaUrl;
-
-        if (selectedUser?.email && selectedUser.email !== "ai@chatapp.com" && !selectedUser.isGroup) {
-            try {
-                let recipientPubKey = selectedUser.publicKey;
-                if (!recipientPubKey) {
-                    const pkRes = await fetchUserPublicKeyAPI(token, selectedUser.email);
-                    recipientPubKey = pkRes?.publicKey;
-                }
-                const userKeys = await getOrGenerateUserKeys(user?.email);
-                if (text.trim()) {
-                    outgoingText = await encryptE2EEMessage(text, recipientPubKey, userKeys?.publicKey);
-                }
-                if (mediaUrl) {
-                    outgoingMediaUrl = await encryptE2EEMessage(mediaUrl, recipientPubKey, userKeys?.publicKey);
-                }
-            } catch (encErr) {
-                console.error("Failed to encrypt message:", encErr);
-            }
-        }
-
         const msg = {
             to: selectedUser.email,
-            message: outgoingText,
+            message: text,
             messageType,
-            mediaUrl: outgoingMediaUrl,
+            mediaUrl,
             fileName: file?.name || "",
             clientMessageId,
 
@@ -1091,24 +1037,35 @@ replyText:
                 : "📍 Current Location"
           )
     : replyMessage?.message || "",
-        replySender: replyMessage?.user || ""
+        replySender: replyMessage?.user || replyMessage?.from || ""
         };
 
-        socket.emit("privateMessage", msg);
+        if (canE2EE && !selectedUser?.isGroup) {
+            try { await sendPrivateEncrypted(msg); }
+            catch (e) { alert("E2EE send failed: " + (e?.message || e)); return; }
+        } else {
+            socket.emit("privateMessage", msg);
+            setMessages(prev => [
+                ...prev,
+                {
+                    ...msg,
+                    from: user.email,
+                    createdAt: new Date()
+                }
+            ]);
+        }
+        setUploadingMedia(true);
+        setUploadProgress(0);
+        try {
+            await sendAdditionalFiles(queuedFiles.slice(1));
+        } finally {
+            setUploadingMedia(false);
+            setUploadProgress(100);
+        }
 
         socket.emit("stopTyping", {
             to: selectedUser.email
         });
-
-        setMessages(prev => [
-            ...prev,
-            {
-                ...msg,
-                message: text,
-                from: user.email,
-                createdAt: new Date()
-            }
-        ]);
 
         setStatusMap(prev => ({
             ...prev,
@@ -1119,15 +1076,28 @@ replyText:
         setText("");
         setFile(null);
         setPreview(null);
+        setFiles([]);
         setReplyMessage(null);
     };
 
     const handleFileChange = (e) => {
-        const selected = e.target.files[0];
-        if (!selected) return;
-
-        setFile(selected);
-        setPreview(URL.createObjectURL(selected));
+        const selected = Array.from(e.target.files || []);
+        if (!selected.length) return;
+        const supported = selected.filter((item) =>
+            item.type.startsWith("image/") ||
+            item.type.startsWith("video/") ||
+            item.type.startsWith("audio/") ||
+            /\.(pdf|docx?|xlsx?|pptx?|txt)$/i.test(item.name)
+        );
+        if (supported.length !== selected.length) {
+            window.alert("Some files are not supported and were removed.");
+        }
+        const nextFiles = [...files, ...supported].slice(0, 10);
+        setFiles(nextFiles);
+        setFile(nextFiles[0] || null);
+        setPreview(nextFiles[0] ? URL.createObjectURL(nextFiles[0]) : null);
+        setShowAttachmentMenu(false);
+        e.target.value = "";
     };
     const startRecording = async () => {
 
@@ -1489,157 +1459,61 @@ const handleReaction = (msg, emoji) => {
 
 };
 
-    const handleSendAIImageMessage = (mediaUrl, prompt) => {
-        if (!selectedUser || !socket) return;
-        const clientMessageId = Date.now().toString();
 
-        if (selectedUser.isGroup) {
-            socket.emit("groupMessage", {
-                groupId: selectedUser._id,
-                message: prompt,
-                messageType: "image",
-                mediaUrl,
-                replyTo: null,
-                replyText: "",
-                replySender: ""
-            });
-            setMessages(prev => [
-                ...prev,
-                {
-                    from: user.email,
-                    to: selectedUser._id,
-                    message: prompt,
-                    messageType: "image",
-                    mediaUrl,
-                    createdAt: new Date(),
-                    status: "sent"
-                }
-            ]);
-        } else {
-            const msg = {
-                to: selectedUser.email,
-                message: prompt,
-                messageType: "image",
-                mediaUrl,
-                fileName: "",
-                clientMessageId,
-                replyTo: null,
-                replyText: "",
-                replySender: ""
-            };
-            socket.emit("privateMessage", msg);
-            setMessages(prev => [
-                ...prev,
-                {
-                    ...msg,
-                    from: user.email,
-                    createdAt: new Date()
-                }
-            ]);
-        }
-    };
         
     return (
         <>
-            <div
-            style={{
-              display: "flex",
-             justifyContent: "flex-end",
-              padding: "10px",
-              gap: "8px"
-             }}
->
-             <button
-                onClick={() => setShowAIModal(true)}
-                style={{
-                    padding: "8px 14px",
-                    borderRadius: "8px",
-                    cursor: "pointer",
-                    background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
-                    color: "white",
-                    border: "none",
-                    fontWeight: "bold",
-                    boxShadow: "0 2px 8px rgba(99,102,241,0.3)",
-                }}
-             >
-                🤖 AI Tools
-             </button>
-             <button
-        onClick={() => setSearchOpen(!isSearchVisible)}
-        style={{
-            padding: "8px 14px",
-            borderRadius: "8px",
-            cursor: "pointer"
-        }}
-    >
-        🔍 Search
-    </button>
-</div>
-                  {isSearchVisible && (
-
-                 <div
-                 style={{
-                 padding: "10px",
-                background: "#202c33",
-                display:"flex",
-                gap:"8px",
-                alignItems:"center"
-             }}
-    >
-
-        <input
-            value={searchTextValue}
-            onChange={(e)=>
-                setSearchQuery(e.target.value)}
-            placeholder="Search messages..."
-            style={{
-              flex:1,
-              padding:"10px",
-              borderRadius:"8px",
-              border:"none"
-            }}
-        />
-        <button
-        disabled={matchedIndexesValue.length===0}
-        onClick={()=>
-            setMatchIndex(prev=>
-                prev===0
-                ?matchedIndexesValue.length-1
-                :prev-1
-            )
-        }
-        >
-              ▲
-        </button>
-        <button
-        disabled={matchedIndexesValue.length===0}
-        onClick={()=>
-            setMatchIndex(prev=>
-                prev===matchedIndexesValue.length-1
-                ?0
-                :prev+1
-            )
-        }
-        >
-              ▼
-        </button>
-        <span>
-            {matchedIndexesValue.length===0
-            ?"0/0"
-            : `${currentMatchValue+1}/${matchedIndexesValue.length}`}
-        </span>
-        <button
-        onClick={()=>{
-            setSearchOpen(false);
-            setSearchQuery("");
-        }}
-        >
-              ✕
-        </button>
-
-    </div>
-
-)}
+            {isSearchVisible && (
+                <div className="chat-search-bar">
+                    <span style={{ fontSize: "14px", color: "var(--text-muted)" }}>🔍</span>
+                    <input
+                        value={searchTextValue}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="Search in conversation..."
+                        autoFocus
+                    />
+                    <span className="search-count-pill">
+                        {matchedIndexesValue.length === 0
+                            ? "0 matches"
+                            : `${currentMatchValue + 1} of ${matchedIndexesValue.length}`}
+                    </span>
+                    <button
+                        disabled={matchedIndexesValue.length === 0}
+                        onClick={() =>
+                            setMatchIndex(prev =>
+                                prev === 0
+                                    ? matchedIndexesValue.length - 1
+                                    : prev - 1
+                            )
+                        }
+                        title="Previous match"
+                    >
+                        ▲
+                    </button>
+                    <button
+                        disabled={matchedIndexesValue.length === 0}
+                        onClick={() =>
+                            setMatchIndex(prev =>
+                                prev === matchedIndexesValue.length - 1
+                                    ? 0
+                                    : prev + 1
+                            )
+                        }
+                        title="Next match"
+                    >
+                        ▼
+                    </button>
+                    <button
+                        onClick={() => {
+                            setSearchOpen(false);
+                            setSearchQuery("");
+                        }}
+                        title="Close search"
+                    >
+                        ✕
+                    </button>
+                </div>
+            )}
             <div className="messages-container" id="messagesBox">
                 {messages.map((msg, i) => (
                     <div
@@ -1651,6 +1525,7 @@ const handleReaction = (msg, emoji) => {
                       
                         msg={msg}
                         currentUser={user}
+                        selectedUser={selectedUser}
                       
                         status={statusMap[msg.clientMessageId]||msg.status}
                         onReply={setReplyMessage}
@@ -1671,47 +1546,71 @@ const handleReaction = (msg, emoji) => {
                 
                 ))}
                 {aiTyping && (
-    <div
-        style={{
-            display: "flex",
-            justifyContent: "flex-start",
-            margin: "10px 0"
-        }}
-    >
-        <div
-            style={{
-                background: "#202c33",
-                color: "white",
-                padding: "10px 16px",
-                borderRadius: "18px",
-                maxWidth: "120px"
-            }}
-        >
-            🤖 Typing...
-        </div>
-    </div>
-)}
+                    <div style={{ display: "flex", justifyContent: "flex-start", margin: "10px 0" }}>
+                        <div style={{ background: "#2f3136", padding: "10px 14px", borderRadius: "10px", color: "#8e9297", display: "flex", alignItems: "center", gap: "8px", fontSize: "13px" }}>
+                            <span>🤖 AI is thinking</span>
+                            <div className="dot-container">
+                                <div className="dot"></div>
+                                <div className="dot"></div>
+                                <div className="dot"></div>
+                            </div>
+                        </div>
+                    </div>
+                )}
                 <div ref={bottomRef}></div>
             </div>
 
-          {preview && (
+          {preview && file && (
     <div
         style={{
             margin: "10px",
             padding: "10px",
             borderRadius: "12px",
-            background: "rgba(255,255,255,0.04)",
+            background: "#2a2f3a",
             display: "inline-block",
-            maxWidth: "260px"
+            maxWidth: "260px",
+            position: "relative",
+            border: "1px solid rgba(255,255,255,0.12)"
         }}
     >
+        <div style={{ color: "#cbd5e1", fontSize: "12px", marginBottom: "8px" }}>
+            {files.length > 1 ? `${files.length} files selected` : file.name}
+        </div>
+        <button
+            onClick={() => {
+                setFile(null);
+                setPreview(null);
+                setFiles([]);
+            }}
+            style={{
+                position: "absolute",
+                top: "4px",
+                right: "4px",
+                background: "rgba(0,0,0,0.75)",
+                color: "white",
+                border: "none",
+                borderRadius: "50%",
+                width: "24px",
+                height: "24px",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: "14px",
+                zIndex: 10
+            }}
+            title="Remove attachment"
+        >
+            ✕
+        </button>
 
         {file.type.startsWith("image") ? (
 
             <img
                 src={preview}
                 width="200"
-                style={{ borderRadius: "8px" }}
+                style={{ borderRadius: "8px", display: "block" }}
+                alt="File preview"
             />
 
         ) : file.type.startsWith("video") ? (
@@ -1720,17 +1619,30 @@ const handleReaction = (msg, emoji) => {
                 src={preview}
                 width="200"
                 controls
-                style={{ borderRadius: "8px" }}
+                style={{ borderRadius: "8px", display: "block" }}
             />
 
+        ) : file.type.startsWith("audio") ? (
+            <audio src={preview} controls style={{ width: "220px" }} />
         ) : (
 
-            <div
+            <button
+                type="button"
+                onClick={() => setDocumentPreview({
+                    url: preview,
+                    fileName: file.name,
+                    fileSize: file.size,
+                    type: file.type === "application/pdf" ? "pdf" : "document"
+                })}
                 style={{
                     display: "flex",
                     alignItems: "center",
                     gap: "10px",
-                    color: "white"
+                    color: "white",
+                    padding: "10px",
+                    border: 0,
+                    cursor: "pointer",
+                    textAlign: "left"
                 }}
             >
                 <span style={{ fontSize: "32px" }}>📄</span>
@@ -1739,7 +1651,8 @@ const handleReaction = (msg, emoji) => {
                     <div
                         style={{
                             fontWeight: "bold",
-                            wordBreak: "break-word"
+                            wordBreak: "break-word",
+                            fontSize: "13px"
                         }}
                     >
                         {file.name}
@@ -1747,19 +1660,46 @@ const handleReaction = (msg, emoji) => {
 
                     <div
                         style={{
-                            fontSize: "12px",
-                            color: "#999"
+                            fontSize: "11px",
+                            color: "#8e9297"
                         }}
                     >
-                        {(file.size / 1024).toFixed(1)} KB
+                        {formatFileSize(file.size)}
                     </div>
                 </div>
-            </div>
+            </button>
 
+        )}
+        {files.length > 1 && (
+            <div style={{ marginTop: "8px", color: "#9ca3af", fontSize: "11px" }}>
+                {files.slice(1).map((queuedFile) => (
+                    <div key={`${queuedFile.name}-${queuedFile.lastModified}`}>{queuedFile.name}</div>
+                ))}
+            </div>
         )}
 
     </div>
 )}
+            {uploadingMedia && (
+                <div style={{ margin: "4px 10px", color: "#93c5fd", fontSize: "12px" }}>
+                    Uploading attachments... {uploadProgress}%
+                </div>
+            )}
+            {documentPreview && (
+                <MediaModal
+                    mediaUrl={documentPreview.url}
+                    type={documentPreview.type}
+                    fileName={documentPreview.fileName}
+                    fileSize={documentPreview.fileSize}
+                    onDownload={() => {
+                        const link = document.createElement("a");
+                        link.href = documentPreview.url;
+                        link.download = documentPreview.fileName;
+                        link.click();
+                    }}
+                    onClose={() => setDocumentPreview(null)}
+                />
+            )}
 
             {isBlocked && (
                 <div style={{ color: "#ef4444", margin: "6px 8px",fontSize:"12px", paddingLeft:"30px" }}>
@@ -1899,184 +1839,170 @@ const handleReaction = (msg, emoji) => {
             </div>
         )}
 
-            <div className="input-bar">
-                 <button
-        className="send-btn"
-        onClick={() =>
-            document.getElementById("mediaInput").click()
-        }
-        style={{
-        width: "30px",
-        height: "30px",
-        background: "red",
-        color: "white",
-        fontSize: "24px",
-        border: "2px solid white",
-        borderRadius: "50%",
-        marginRight: "10px"
-    }}
-        title="Attachment"
-    >
-        ➕
-    </button>
-      <div style={{ position: "relative" }}>
+            <div className="chat-input-area">
+                <div className="input-bar">
+                    <div style={{ position: "relative" }}>
+                        <button
+                            type="button"
+                            className="input-action-btn"
+                            onClick={() => setShowAttachmentMenu((visible) => !visible)}
+                            title="Attachment"
+                        >
+                            📎
+                        </button>
+                        {showAttachmentMenu && (
+                            <div className="attachment-dropdown">
+                                {[
+                                    ["🖼️ Photos & Videos", "image/*,video/*"],
+                                    ["🎵 Audio Files", "audio/*"],
+                                    ["📄 Documents & PDFs", ".pdf,.doc,.docx,.txt,.xls,.xlsx,.ppt,.pptx"]
+                                ].map(([label, accept]) => (
+                                    <button
+                                        key={label}
+                                        type="button"
+                                        onClick={() => {
+                                            const input = document.getElementById("mediaInput");
+                                            input.accept = accept;
+                                            input.click();
+                                            setShowAttachmentMenu(false);
+                                        }}
+                                    >
+                                        {label}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
 
-    <button
-        className="send-btn"
-        onClick={() => setShowLocationMenu(prev => !prev)}
-        title="Location"
-    >
-        📍
-    </button>
-    {isSharingLiveLocation && (
+                    <div style={{ position: "relative" }}>
+                        <button
+                            type="button"
+                            className="input-action-btn"
+                            onClick={() => setShowLocationMenu(prev => !prev)}
+                            title="Location"
+                        >
+                            📍
+                        </button>
+                        {isSharingLiveLocation && (
+                            <button
+                                type="button"
+                                className="input-action-btn"
+                                onClick={stopLiveLocation}
+                                title="Stop Live Location"
+                                style={{ color: "var(--accent-red)" }}
+                            >
+                                ⛔
+                            </button>
+                        )}
 
-    <button
-        className="send-btn"
-        onClick={stopLiveLocation}
-        title="Stop Live Location"
-    >
-        ⛔
-    </button>
+                        {showLocationMenu && (
+                            <div className="location-dropdown">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        sendLocation();
+                                        setShowLocationMenu(false);
+                                    }}
+                                >
+                                    📍 Current Location
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setShowLiveLocationModal(true);
+                                        setShowLocationMenu(false);
+                                    }}
+                                >
+                                    🌍 Live Location
+                                </button>
+                            </div>
+                        )}
+                    </div>
 
-)}
+                    <input
+                        value={text}
+                        disabled={isBlocked && !selectedUser?.isGroup}
+                        onChange={(e) => {
+                            setText(e.target.value);
+                            if (!selectedUser?.email || !socket) return;
+                            socket.emit("typing", { to: selectedUser.email });
+                            if (typingTimeoutRef.current) {
+                                clearTimeout(typingTimeoutRef.current);
+                            }
+                            typingTimeoutRef.current = setTimeout(() => {
+                                socket.emit("stopTyping", { to: selectedUser.email });
+                            }, 1500);
+                        }}
+                        onKeyDown={(e) => {
+                            if (e.key === "Enter" && !e.shiftKey) {
+                                e.preventDefault();
+                                sendMessage();
+                            }
+                        }}
+                        placeholder={isBlocked && !selectedUser?.isGroup ? "You have blocked this contact" : "Write a message..."}
+                        id="msgInput"
+                    />
 
-    {showLocationMenu && (
+                    <input
+                        id="mediaInput"
+                        type="file"
+                        accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.txt,.xls,.xlsx,.ppt,.pptx"
+                        multiple
+                        onChange={handleFileChange}
+                        style={{ display: "none" }}
+                    />
 
-        <div
-            style={{
-                position: "absolute",
-                bottom: "55px",
-                left: "0",
-                background: "#202c33",
-                borderRadius: "12px",
-                overflow: "hidden",
-                boxShadow: "0 4px 18px rgba(0,0,0,.4)",
-                minWidth: "180px",
-                zIndex: 1000
-            }}
-        >
-
-            <div
-                onClick={()=>{
-                    sendLocation();
-                    setShowLocationMenu(false);
-                }}
-                style={{
-                    padding:"12px",
-                    cursor:"pointer"
-                }}
-            >
-                📍 Current Location
-            </div>
-
-            <div
-                onClick={()=>{
-                    setShowLiveLocationModal(true);
-                    setShowLocationMenu(false);
-                }}
-                style={{
-                    padding:"12px",
-                    cursor:"pointer"
-                }}
-            >
-                🌍 Live Location
-            </div>
-
-        </div>
-
-    )}
-
-</div>
-
-    
-
-                <input
-                    value={text}
-                    disabled={isBlocked && !selectedUser?.isGroup}
-                    onChange={(e) => {
-                        setText(e.target.value);
-                        if (!selectedUser?.email || !socket) return;
-                        socket.emit("typing", { to: selectedUser.email });
-                        if (typingTimeoutRef.current) {
-                            clearTimeout(typingTimeoutRef.current);
-                        }
-                        typingTimeoutRef.current = setTimeout(() => {
-                            socket.emit("stopTyping", { to: selectedUser.email });
-                        }, 1500);
-                    }}
-                    onKeyDown={(e) => {
-                        if (e.key === "Enter") sendMessage();
-                    }}
-                    placeholder="Write a message..."
-                    id="msgInput"
-                />
-
-                <input
-                    id="mediaInput"
-                    type="file"
-                    accept="image/*,video/*,.pdf,.doc,.docx,.txt,.zip"
-                    onChange={handleFileChange}
-                    style={{display:"none"}}
-                />
-
-                {isRecording ? (
-
-    <div
-        style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "10px"
-        }}
-    >
-
-        <button
-            className="send-btn"
-            onClick={deleteRecording}
-        >
-            🗑
-        </button>
-
-        <span>
-            {Math.floor(recordingTime / 60)}
-            :
-            {String(recordingTime % 60).padStart(2, "0")}
-        </span>
-
-        <button
-            className="send-btn"
-            onClick={togglePauseRecording}
-        >
-            {isPaused ? "▶" : "⏸"}
-        </button>
-
-        <button
-            className="send-btn"
-            onClick={stopRecording}
-        >
-            ➤
-        </button>
-
-    </div>
-
-) : text.trim() || file ? (
-
-    <button
-        className="send-btn"
-        onClick={sendMessage}
-    >
-        ➤
-    </button>
-
-) : (
-
-    <button
-        className="send-btn"
-        onClick={startRecording}
-    >
-        🎤
-    </button>
-
-)}
+                    {isRecording ? (
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                            <button
+                                type="button"
+                                className="input-action-btn"
+                                onClick={deleteRecording}
+                                title="Cancel recording"
+                            >
+                                🗑
+                            </button>
+                            <span style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-color)" }}>
+                                {Math.floor(recordingTime / 60)}:{String(recordingTime % 60).padStart(2, "0")}
+                            </span>
+                            <button
+                                type="button"
+                                className="input-action-btn"
+                                onClick={togglePauseRecording}
+                                title={isPaused ? "Resume" : "Pause"}
+                            >
+                                {isPaused ? "▶" : "⏸"}
+                            </button>
+                            <button
+                                type="button"
+                                className="send-btn"
+                                onClick={stopRecording}
+                                title="Send voice note"
+                            >
+                                ➤
+                            </button>
+                        </div>
+                    ) : (text.trim() || file) ? (
+                        <button
+                            type="button"
+                            className="send-btn"
+                            onClick={sendMessage}
+                            title="Send message"
+                        >
+                            ➤
+                        </button>
+                    ) : (
+                        <button
+                            type="button"
+                            className="input-action-btn"
+                            onClick={startRecording}
+                            title="Record voice note"
+                            style={{ fontSize: "16px" }}
+                        >
+                            🎤
+                        </button>
+                    )}
+                </div>
             </div>
      {voicePreview && (
 
@@ -2180,14 +2106,6 @@ const handleReaction = (msg, emoji) => {
 
 )}
      
-            {showAIModal && (
-                <AIPanelModal
-                    selectedUser={selectedUser}
-                    onClose={() => setShowAIModal(false)}
-                    onSendImageMessage={handleSendAIImageMessage}
-                />
-            )}
-
         </>
     );
 }

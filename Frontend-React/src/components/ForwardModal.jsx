@@ -3,13 +3,13 @@ import { useAuth } from "../context/AuthContext";
 import { fetchUsers,getGroups } from "../services/api";
 
 export default function ForwardModal({
-   
+    currentChatUser,
     onClose,
     onForward
 }) {
 
 
-    const {token}=useAuth();
+    const { token, user: currentUser } = useAuth();
     const [users,setUsers]=useState([]);
     const [groups, setGroups] = useState([]);
     const [selectedUser,setSelectedUser]=useState(null);
@@ -23,14 +23,25 @@ export default function ForwardModal({
            
 
             if(Array.isArray(userData)){
-                setUsers(userData);
+                const currentEmail = String(currentUser?.email || '').trim().toLowerCase();
+                const availableUsers = userData.filter(user =>
+                    String(user.email || '').trim().toLowerCase() !== currentEmail
+                );
+                const chatEmail = String(currentChatUser?.email || '').trim().toLowerCase();
+                const activeChatUser = availableUsers.find(user =>
+                    String(user.email || '').trim().toLowerCase() === chatEmail
+                );
+                const otherUsers = availableUsers.filter(user =>
+                    String(user.email || '').trim().toLowerCase() !== chatEmail
+                );
+                setUsers(activeChatUser ? [activeChatUser, ...otherUsers] : availableUsers);
             }
             if(Array.isArray(groupData)){
                 setGroups(groupData);
             }
         };
         loadData();
-    },[token]);
+    },[token, currentUser?.email, currentChatUser?.email]);
 
     return (
         <div

@@ -1,0 +1,862 @@
+/* WhatsApp Web Theme - Project2 */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+:root {
+    /* WhatsApp Dark Theme Palette */
+    --wa-green-primary: #00a884;
+    --wa-green-dark: #008069;
+    --wa-green-light: #25d366;
+    --wa-green-outgoing: #005c4b;
+    --wa-green-outgoing-hover: #02735e;
+    
+    --wa-dark-bg: #111b21;
+    --wa-dark-chat-bg: #0b141a;
+    --wa-dark-panel: #202c33;
+    --wa-dark-panel-hover: #222e35;
+    --wa-dark-panel-active: #2a3942;
+    --wa-dark-input: #2a3942;
+    
+    --wa-text-primary: #e9edef;
+    --wa-text-secondary: #8696a0;
+    --wa-text-muted: #667781;
+    --wa-border: rgba(134, 150, 160, 0.15);
+    
+    --wa-tick-blue: #53bdeb;
+    --wa-tick-gray: #8696a0;
+    
+    --primary-bg: var(--wa-dark-bg);
+    --sidebar-bg: var(--wa-dark-bg);
+    --chat-bg: var(--wa-dark-chat-bg);
+    --bubble-me: var(--wa-green-outgoing);
+    --bubble-other: var(--wa-dark-panel);
+    --text-color: var(--wa-text-primary);
+    --text-muted: var(--wa-text-secondary);
+}
+
+body[data-theme="light"] {
+    --wa-green-primary: #00a884;
+    --wa-green-dark: #008069;
+    --wa-green-outgoing: #d9fdd3;
+    --wa-green-outgoing-hover: #c4f7bc;
+    
+    --wa-dark-bg: #ffffff;
+    --wa-dark-chat-bg: #efeae2;
+    --wa-dark-panel: #ffffff;
+    --wa-dark-panel-hover: #f5f6f6;
+    --wa-dark-panel-active: #e9edef;
+    --wa-dark-input: #f0f2f5;
+    
+    --wa-text-primary: #111b21;
+    --wa-text-secondary: #667781;
+    --wa-text-muted: #8696a0;
+    --wa-border: rgba(17, 27, 33, 0.08);
+    
+    --primary-bg: #f0f2f5;
+    --sidebar-bg: #ffffff;
+    --chat-bg: #efeae2;
+    --bubble-me: #d9fdd3;
+    --bubble-other: #ffffff;
+    --text-color: #111b21;
+    --text-muted: #667781;
+}
+
+body {
+    background-color: var(--wa-dark-bg);
+    color: var(--wa-text-primary);
+    height: 100vh;
+    width: 100vw;
+    display: flex;
+    overflow: hidden;
+    user-select: none;
+}
+
+/* Custom Scrollbars like WhatsApp */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(134, 150, 160, 0.3);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(134, 150, 160, 0.5);
+}
+
+/* WhatsApp Main Layout Container */
+.sidebar {
+    width: 380px;
+    min-width: 320px;
+    max-width: 480px;
+    background: var(--wa-dark-bg);
+    border-right: 1px solid var(--wa-border);
+    display: flex;
+    flex-direction: column;
+    z-index: 10;
+    position: relative;
+    height: 100%;
+}
+
+/* WhatsApp Sidebar Header */
+.sidebar-header {
+    height: 60px;
+    padding: 10px 16px;
+    background: var(--wa-dark-panel);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--wa-border);
+    flex-shrink: 0;
+}
+
+.sidebar-header .user-avatar-btn {
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    padding: 0;
+    display: flex;
+    align-items: center;
+}
+
+.sidebar-header .user-avatar-btn:hover {
+    opacity: 0.9;
+}
+
+.sidebar-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.sidebar-icon-btn {
+    background: transparent;
+    border: none;
+    color: var(--wa-text-secondary);
+    font-size: 18px;
+    cursor: pointer;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.sidebar-icon-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--wa-text-primary);
+}
+
+body[data-theme="light"] .sidebar-icon-btn:hover {
+    background: rgba(0, 0, 0, 0.05);
+}
+
+/* Sidebar Search Box */
+.sidebar-search-box {
+    padding: 8px 12px;
+    background: var(--wa-dark-bg);
+    border-bottom: 1px solid var(--wa-border);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.search-container {
+    position: relative;
+    display: flex;
+    align-items: center;
+    background: var(--wa-dark-panel);
+    border-radius: 8px;
+    padding: 0 12px;
+    height: 36px;
+    border: 1px solid transparent;
+    transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.search-container:focus-within {
+    border-color: var(--wa-green-primary);
+    background: var(--wa-dark-panel);
+}
+
+.search-icon-svg {
+    color: var(--wa-text-secondary);
+    margin-right: 12px;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+}
+
+.search-container input {
+    width: 100%;
+    height: 100%;
+    border: none;
+    background: transparent;
+    color: var(--wa-text-primary);
+    font-size: 14px;
+    outline: none;
+}
+
+.search-container input::placeholder {
+    color: var(--wa-text-secondary);
+    font-size: 14px;
+}
+
+/* Filter Chips (All, Unread, Groups) like WhatsApp Web */
+.filter-chips {
+    display: flex;
+    gap: 6px;
+    padding-top: 2px;
+}
+
+.filter-chip {
+    padding: 5px 12px;
+    border-radius: 16px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    background: var(--wa-dark-panel);
+    color: var(--wa-text-secondary);
+    border: 1px solid transparent;
+    transition: all 0.2s;
+}
+
+.filter-chip:hover {
+    background: var(--wa-dark-panel-active);
+    color: var(--wa-text-primary);
+}
+
+.filter-chip.active {
+    background: rgba(0, 168, 132, 0.16);
+    color: var(--wa-green-primary);
+    font-weight: 600;
+    border-color: rgba(0, 168, 132, 0.4);
+}
+
+/* Friend / Chat List */
+.friend-list {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 0;
+}
+
+.friend {
+    display: flex;
+    align-items: center;
+    padding: 10px 16px;
+    height: 72px;
+    cursor: pointer;
+    transition: background 0.15s ease;
+    position: relative;
+    border-bottom: 1px solid var(--wa-border);
+}
+
+.friend:hover {
+    background: var(--wa-dark-panel-hover);
+}
+
+.friend.active {
+    background: var(--wa-dark-panel-active);
+}
+
+.avatar-container {
+    position: relative;
+    margin-right: 14px;
+    flex-shrink: 0;
+}
+
+.avatar {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: #6b7280;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 17px;
+    color: white;
+    overflow: hidden;
+    flex-shrink: 0;
+}
+
+.avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 50%;
+}
+
+.status-dot {
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    background: #8696a0;
+    position: absolute;
+    bottom: 0px;
+    right: 0px;
+    border: 2px solid var(--wa-dark-bg);
+}
+
+.status-dot.online {
+    background: var(--wa-green-light);
+}
+
+.friend-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.friend-header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 3px;
+}
+
+.friend-name {
+    font-weight: 500;
+    font-size: 16px;
+    color: var(--wa-text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 190px;
+}
+
+.friend-time {
+    font-size: 12px;
+    color: var(--wa-text-secondary);
+    white-space: nowrap;
+}
+
+.friend-sub-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.friend-last-msg {
+    font-size: 13px;
+    color: var(--wa-text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 220px;
+}
+
+.unread-badge {
+    background: var(--wa-green-primary);
+    color: #111b21;
+    min-width: 20px;
+    height: 20px;
+    border-radius: 10px;
+    padding: 0 6px;
+    font-size: 11px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    margin-left: 6px;
+}
+
+/* Archived section */
+.archived-banner {
+    display: flex;
+    align-items: center;
+    padding: 12px 16px;
+    height: 52px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--wa-border);
+    transition: background 0.15s ease;
+    color: var(--wa-text-primary);
+}
+
+.archived-banner:hover {
+    background: var(--wa-dark-panel-hover);
+}
+
+.archived-icon {
+    font-size: 18px;
+    margin-right: 14px;
+    color: var(--wa-text-secondary);
+}
+
+.archived-title {
+    font-size: 15px;
+    font-weight: 500;
+    flex: 1;
+}
+
+.archived-count {
+    font-size: 13px;
+    color: var(--wa-green-primary);
+    font-weight: 600;
+}
+
+/* Chat Main Area */
+.chat-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background-color: var(--wa-dark-chat-bg);
+    position: relative;
+    height: 100%;
+    overflow: hidden;
+}
+
+/* WhatsApp Chat Doodle Pattern Background */
+#activeChat {
+    background-color: var(--wa-dark-chat-bg);
+    background-image: radial-gradient(rgba(134, 150, 160, 0.08) 1px, transparent 1px),
+                      radial-gradient(rgba(0, 168, 132, 0.05) 1px, transparent 1px);
+    background-size: 24px 24px;
+    background-position: 0 0, 12px 12px;
+}
+
+body[data-theme="light"] #activeChat {
+    background-color: #efeae2;
+    background-image: radial-gradient(rgba(0, 0, 0, 0.06) 1px, transparent 1px);
+    background-size: 20px 20px;
+}
+
+/* WhatsApp Chat Header */
+.chat-header {
+    height: 60px;
+    padding: 10px 16px;
+    background: var(--wa-dark-panel);
+    border-bottom: 1px solid var(--wa-border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+    z-index: 5;
+}
+
+.header-user {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+}
+
+.header-user .avatar {
+    width: 40px;
+    height: 40px;
+    font-size: 15px;
+}
+
+.header-info {
+    margin-left: 12px;
+}
+
+.header-name {
+    font-weight: 500;
+    font-size: 16px;
+    color: var(--wa-text-primary);
+    line-height: 1.2;
+}
+
+#headerStatus {
+    font-size: 12px;
+    color: var(--wa-text-secondary);
+    margin-top: 2px;
+}
+
+.typing-indicator {
+    font-size: 12px;
+    color: var(--wa-green-primary);
+    margin-top: 2px;
+    display: none;
+    align-items: center;
+    gap: 4px;
+    font-weight: 500;
+}
+
+.typing-indicator.active {
+    display: flex;
+}
+
+.dot-container {
+    display: flex;
+    gap: 3px;
+}
+
+.dot {
+    width: 4px;
+    height: 4px;
+    background: var(--wa-green-primary);
+    border-radius: 50%;
+    animation: bounce 1s infinite ease-in-out;
+}
+
+.dot:nth-child(2) { animation-delay: 0.2s; }
+.dot:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes bounce {
+    0%, 80%, 100% { transform: translateY(0); }
+    40% { transform: translateY(-4px); }
+}
+
+.header-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.header-actions button {
+    background: transparent;
+    border: none;
+    color: var(--wa-text-secondary);
+    cursor: pointer;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    font-size: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s ease;
+}
+
+.header-actions button:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--wa-text-primary);
+}
+
+body[data-theme="light"] .header-actions button:hover {
+    background: rgba(0, 0, 0, 0.05);
+}
+
+/* WhatsApp Message Stream */
+.messages-container {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 50px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+@media (max-width: 900px) {
+    .messages-container {
+        padding: 12px 16px;
+    }
+}
+
+/* Message Bubble (WhatsApp Style) */
+.message {
+    max-width: 65%;
+    min-width: 90px;
+    padding: 6px 9px 8px 9px;
+    font-size: 14.2px;
+    line-height: 19px;
+    position: relative;
+    border-radius: 8px;
+    box-shadow: 0 1px 0.5px rgba(0, 0, 0, 0.13);
+    margin-bottom: 3px;
+    word-wrap: break-word;
+    user-select: text;
+}
+
+.message.me {
+    background: var(--wa-green-outgoing);
+    color: var(--wa-text-primary);
+    align-self: flex-end;
+    border-top-right-radius: 0px;
+}
+
+body[data-theme="light"] .message.me {
+    background: var(--wa-green-outgoing);
+    color: #111b21;
+}
+
+.message.other {
+    background: var(--wa-dark-panel);
+    color: var(--wa-text-primary);
+    align-self: flex-start;
+    border-top-left-radius: 0px;
+}
+
+body[data-theme="light"] .message.other {
+    background: #ffffff;
+    color: #111b21;
+}
+
+/* WhatsApp Message Tail Effect */
+.message.me::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: -8px;
+    width: 8px;
+    height: 12px;
+    background: var(--wa-green-outgoing);
+    clip-path: polygon(0 0, 0% 100%, 100% 0);
+}
+
+.message.other::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: -8px;
+    width: 8px;
+    height: 12px;
+    background: var(--wa-dark-panel);
+    clip-path: polygon(100% 0, 0 0, 100% 100%);
+}
+
+body[data-theme="light"] .message.other::before {
+    background: #ffffff;
+}
+
+.msg-time {
+    font-size: 11px;
+    color: var(--wa-text-secondary);
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    float: right;
+    margin-left: 12px;
+    margin-top: 4px;
+    user-select: none;
+}
+
+.msg-status-tick {
+    font-size: 12px;
+    line-height: 1;
+}
+
+.msg-status-tick.seen {
+    color: var(--wa-tick-blue);
+}
+
+.msg-status-tick.delivered, .msg-status-tick.sent {
+    color: var(--wa-tick-gray);
+}
+
+/* WhatsApp Reply Quote Box */
+.reply-preview-container {
+    background: rgba(0, 0, 0, 0.16);
+    border-left: 4px solid var(--wa-green-primary);
+    padding: 6px 10px;
+    border-radius: 4px;
+    margin-bottom: 6px;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.reply-sender-name {
+    font-weight: 600;
+    color: var(--wa-green-primary);
+    margin-bottom: 2px;
+}
+
+.reply-text-snippet {
+    color: var(--wa-text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* WhatsApp Input Bar */
+.input-bar {
+    min-height: 62px;
+    padding: 8px 16px;
+    background: var(--wa-dark-panel);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+    position: relative;
+    z-index: 5;
+}
+
+.input-bar-btn {
+    background: transparent;
+    border: none;
+    color: var(--wa-text-secondary);
+    font-size: 22px;
+    cursor: pointer;
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.15s ease, background 0.15s ease;
+    flex-shrink: 0;
+}
+
+.input-bar-btn:hover {
+    color: var(--wa-text-primary);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.input-bar input {
+    flex: 1;
+    padding: 10px 16px;
+    border-radius: 8px;
+    background: var(--wa-dark-input);
+    border: none;
+    color: var(--wa-text-primary);
+    outline: none;
+    font-size: 15px;
+    height: 42px;
+}
+
+.input-bar input::placeholder {
+    color: var(--wa-text-secondary);
+}
+
+.send-btn {
+    background: var(--wa-green-primary);
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    border: none;
+    color: #111b21;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.15s ease, background 0.15s ease;
+    flex-shrink: 0;
+    font-size: 16px;
+    font-weight: bold;
+}
+
+.send-btn:hover {
+    background: #02b68f;
+    transform: scale(1.04);
+}
+
+/* WhatsApp Web Empty State */
+.empty-chat {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: var(--wa-text-secondary);
+    text-align: center;
+    padding: 40px;
+    background: var(--wa-dark-panel);
+    border-bottom: 6px solid var(--wa-green-primary);
+}
+
+.empty-chat h3 {
+    color: var(--wa-text-primary);
+    font-size: 32px;
+    font-weight: 300;
+    margin-top: 24px;
+    margin-bottom: 12px;
+}
+
+.empty-chat p {
+    font-size: 14px;
+    line-height: 20px;
+    max-width: 460px;
+    color: var(--wa-text-secondary);
+}
+
+.empty-chat-lock {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--wa-text-muted);
+    position: absolute;
+    bottom: 30px;
+}
+
+/* Modals */
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(11, 20, 26, 0.7);
+    backdrop-filter: blur(2px);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999;
+}
+
+.modal {
+    background: var(--wa-dark-panel);
+    color: var(--wa-text-primary);
+    padding: 24px;
+    border-radius: 12px;
+    min-width: 360px;
+    max-width: 480px;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+    border: 1px solid var(--wa-border);
+}
+
+/* Toast */
+.group-toast {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: var(--wa-green-dark);
+    color: white;
+    padding: 12px 20px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    z-index: 99999;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+    animation: slideInRight 0.3s ease;
+}
+
+/* WhatsApp Green Primary Buttons */
+.wa-btn-primary {
+    background: var(--wa-green-primary);
+    color: #111b21;
+    font-weight: 600;
+    border: none;
+    border-radius: 24px;
+    padding: 10px 24px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+
+.wa-btn-primary:hover {
+    background: #02b68f;
+    box-shadow: 0 2px 8px rgba(0, 168, 132, 0.35);
+}
+
+.wa-btn-secondary {
+    background: transparent;
+    color: var(--wa-green-primary);
+    border: 1px solid var(--wa-green-primary);
+    font-weight: 600;
+    border-radius: 24px;
+    padding: 10px 24px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s ease;
+}
+
+.wa-btn-secondary:hover {
+    background: rgba(0, 168, 132, 0.1);
+}

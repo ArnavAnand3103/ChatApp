@@ -1,6 +1,6 @@
 import { useRef, useState ,useEffect} from "react";
 
-export default function VoiceMessage({ mediaUrl, isMe }) {
+export default function VoiceMessage({ mediaUrl, isMe, onDownload }) {
 
     const audioRef = useRef(null);
 
@@ -260,6 +260,23 @@ style={{
 >
     {playbackRate}×
 </button>
+    {onDownload && (
+        <button
+            onClick={onDownload}
+            style={{
+                border: "none",
+                background: "rgba(255,255,255,.12)",
+                color: "white",
+                cursor: "pointer",
+                fontSize: "11px",
+                padding: "4px 8px",
+                borderRadius: "10px",
+                alignSelf: "flex-end"
+            }}
+        >
+            Download
+        </button>
+    )}
 
 </div>
         </div>

@@ -1,179 +1,179 @@
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:5001";
 
-const authHeaders=(token,withJson=true)=>({
-    ...(withJson?{"Content-Type":"application/json"}:{}),
-    "Authorization":`Bearer ${token}`
+const authHeaders = (token, withJson = true) => ({
+    ...(withJson ? { "Content-Type": "application/json" } : {}),
+    "Authorization": `Bearer ${token}`
 });
 
-export const fetchUsers=async(token,query="")=>{
-    const res=await fetch(`${API_BASE}/search?q=${encodeURIComponent(query)}`,{
-        headers:authHeaders(token,false)
+export const fetchUsers = async (token, query = "") => {
+    const res = await fetch(`${API_BASE}/search?q=${encodeURIComponent(query)}`, {
+        headers: authHeaders(token, false)
     });
     return res.json();
 };
 
-export const fetchMessages=async(token,targetEmail)=>{
-    const res=await fetch(`${API_BASE}/messages?with=${encodeURIComponent(targetEmail)}`,{
-        headers:authHeaders(token,false)
+export const fetchMessages = async (token, targetEmail) => {
+    const res = await fetch(`${API_BASE}/messages?with=${encodeURIComponent(targetEmail)}`, {
+        headers: authHeaders(token, false)
     });
     return res.json();
 };
 
-export const loginRequest=async(email,password)=>{
-    const res=await fetch(`${API_BASE}/login`,{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({email,password})
+export const loginRequest = async (email, password) => {
+    const res = await fetch(`${API_BASE}/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password })
     });
     return res.json();
 };
 
-export const googleLoginRequest=async(payload)=>{
+export const googleLoginRequest = async (payload) => {
     const body = typeof payload === "string" ? { credential: payload } : payload;
-    const res=await fetch(`${API_BASE}/auth/google`,{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify(body)
+    const res = await fetch(`${API_BASE}/auth/google`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
     });
     return res.json();
 };
 
-export const signupRequest=async(name,email,password)=>{
-    const res=await fetch(`${API_BASE}/signup`,{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({name,email,password})
+export const signupRequest = async (name, email, password) => {
+    const res = await fetch(`${API_BASE}/signup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, email, password })
     });
     return res.json();
 };
 
-export const forgotPasswordRequest=async(email)=>{
-    const res=await fetch(`${API_BASE}/forgot-password`,{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({email})
+export const forgotPasswordRequest = async (email) => {
+    const res = await fetch(`${API_BASE}/forgot-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email })
     });
     return res.json();
 };
 
-export const resetPasswordRequest=async(token,newPassword)=>{
-    const res=await fetch(`${API_BASE}/reset-password`,{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({token,newPassword})
+export const resetPasswordRequest = async (token, newPassword) => {
+    const res = await fetch(`${API_BASE}/reset-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, newPassword })
     });
     return res.json();
 };
 
-export const uploadProfilePhoto=async(token,photoData)=>{
-    const res=await fetch(`${API_BASE}/profile/photo`,{
-        method:"POST",
-        headers:authHeaders(token),
-        body:JSON.stringify({photoData})
+export const uploadProfilePhoto = async (token, photoData) => {
+    const res = await fetch(`${API_BASE}/profile/photo`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ photoData })
     });
     return res.json();
 };
 
-export const deleteProfilePhoto=async(token)=>{
-    const res=await fetch(`${API_BASE}/profile/photo`,{
-        method:"DELETE",
-        headers:authHeaders(token, false)
+export const deleteProfilePhoto = async (token) => {
+    const res = await fetch(`${API_BASE}/profile/photo`, {
+        method: "DELETE",
+        headers: authHeaders(token, false)
     });
     return res.json();
 };
 
-export const updateProfile=async(token, updates)=>{
-    const res=await fetch(`${API_BASE}/profile/update`,{
-        method:"POST",
-        headers:authHeaders(token),
-        body:JSON.stringify(updates)
+export const updateProfile = async (token, updates) => {
+    const res = await fetch(`${API_BASE}/profile/update`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify(updates)
     });
     return res.json();
 };
 
-export const fetchMutualGroups=async(token, targetEmail)=>{
-    const res=await fetch(`${API_BASE}/mutual-groups?with=${encodeURIComponent(targetEmail)}`,{
-        headers:authHeaders(token, false)
+export const fetchMutualGroups = async (token, targetEmail) => {
+    const res = await fetch(`${API_BASE}/mutual-groups?with=${encodeURIComponent(targetEmail)}`, {
+        headers: authHeaders(token, false)
     });
     return res.json();
 };
 
-export const reportUser=async(token, reportedUser, reason)=>{
-    const res=await fetch(`${API_BASE}/report`,{
-        method:"POST",
-        headers:authHeaders(token),
-        body:JSON.stringify({ reportedUser, reason })
+export const reportUser = async (token, reportedUser, reason) => {
+    const res = await fetch(`${API_BASE}/report`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ reportedUser, reason })
     });
     return res.json();
 };
 
-export const toggleBlockUser=async(token, targetEmail)=>{
-    const res=await fetch(`${API_BASE}/block/toggle`,{
-        method:"POST",
-        headers:authHeaders(token),
-        body:JSON.stringify({ target: targetEmail })
+export const toggleBlockUser = async (token, targetEmail) => {
+    const res = await fetch(`${API_BASE}/block/toggle`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ target: targetEmail })
     });
     return res.json();
 };
 
-export const fetchUserProfile=async(token, targetEmail)=>{
-    const res=await fetch(`${API_BASE}/user/profile/${encodeURIComponent(targetEmail)}`,{
-        headers:authHeaders(token, false)
+export const fetchUserProfile = async (token, targetEmail) => {
+    const res = await fetch(`${API_BASE}/user/profile/${encodeURIComponent(targetEmail)}`, {
+        headers: authHeaders(token, false)
     });
     return res.json();
 };
 
-export const registerE2EEDevice=async(token, deviceBundle)=>{
-    const res=await fetch(`${API_BASE}/e2ee/devices`,{
-        method:"POST",
-        headers:authHeaders(token),
-        body:JSON.stringify(deviceBundle)
+export const registerE2EEDevice = async (token, deviceBundle) => {
+    const res = await fetch(`${API_BASE}/e2ee/devices`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify(deviceBundle)
     });
-    const data=await res.json();
-    if(!res.ok) throw new Error(data?.message||"Failed to register E2EE device");
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.message || "Failed to register E2EE device");
     return data;
 };
 
-export const fetchE2EEDevices=async(token, targetEmail, claim=false)=>{
+export const fetchE2EEDevices = async (token, targetEmail, claim = false) => {
     const q = claim ? "?claim=1" : "";
-    const res=await fetch(`${API_BASE}/e2ee/devices/${encodeURIComponent(targetEmail)}${q}`,{
-        headers:authHeaders(token, false)
+    const res = await fetch(`${API_BASE}/e2ee/devices/${encodeURIComponent(targetEmail)}${q}`, {
+        headers: authHeaders(token, false)
     });
-    const data=await res.json();
-    if(!res.ok) throw new Error(data?.message||"Failed to load E2EE devices");
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.message || "Failed to load E2EE devices");
     return data;
 };
 
-export const revokeE2EEDevice=async(token, deviceId)=>{
-    const res=await fetch(`${API_BASE}/e2ee/devices/${encodeURIComponent(deviceId)}`,{
-        method:"DELETE",
-        headers:authHeaders(token, false)
+export const revokeE2EEDevice = async (token, deviceId) => {
+    const res = await fetch(`${API_BASE}/e2ee/devices/${encodeURIComponent(deviceId)}`, {
+        method: "DELETE",
+        headers: authHeaders(token, false)
     });
-    const data=await res.json();
-    if(!res.ok) throw new Error(data?.message||"Failed to revoke E2EE device");
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.message || "Failed to revoke E2EE device");
     return data;
 };
 
-export const fetchAnalytics=async(token)=>{
-    const res=await fetch(`${API_BASE}/analytics`,{
-        headers:authHeaders(token,false)
+export const fetchAnalytics = async (token) => {
+    const res = await fetch(`${API_BASE}/analytics`, {
+        headers: authHeaders(token, false)
     });
     return res.json();
 };
 
-export const fetchMe=async(token)=>{
-    const res=await fetch(`${API_BASE}/me`,{
-        headers:authHeaders(token,false)
+export const fetchMe = async (token) => {
+    const res = await fetch(`${API_BASE}/me`, {
+        headers: authHeaders(token, false)
     });
     return res.json();
 };
 
-export const downloadMedia=async(token, messageId)=>{
-    const res=await fetch(`${API_BASE}/media/${encodeURIComponent(messageId)}/download`,{
-        headers:authHeaders(token,false)
+export const downloadMedia = async (token, messageId) => {
+    const res = await fetch(`${API_BASE}/media/${encodeURIComponent(messageId)}/download`, {
+        headers: authHeaders(token, false)
     });
-    if(!res.ok){
-        const data=await res.json().catch(()=>({}));
+    if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
         throw new Error(data.message || "Unable to download media");
     }
     return res.blob();
@@ -185,7 +185,7 @@ export const createGroup=async(token,data)=>{
             "Content-Type":"application/json",
             "Authorization":`Bearer ${token}`
         },
-        body:JSON.stringify(data)
+        body: JSON.stringify(data)
     });
     return res.json();
 }
@@ -205,88 +205,89 @@ export const fetchGroupInfo=async(token,groupId)=>{
                 "Authorization":`Bearer ${token}`
             }
         }
+    }
     );
     return await res.json();
 }
-export const fetchGroupMessages=async(
+export const fetchGroupMessages = async (
     token,
     groupId
-)=>{
-    const res=await fetch(
+) => {
+    const res = await fetch(
         `${API_BASE}/group-messages/${groupId}`,
         {
-            headers:{
-                "Authorization":`Bearer ${token}`
+            headers: {
+                "Authorization": `Bearer ${token}`
             }
         }
     );
     return res.json();
 }
-export const leaveGroup=async(token,groupId)=>{
-    const res=await fetch(
+export const leaveGroup = async (token, groupId) => {
+    const res = await fetch(
         `${API_BASE}/group/${groupId}/leave`,
         {
-            method:"POST",
-            headers:{
-                Authorization:`Bearer ${token}`
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${token}`
             }
         }
     );
     return await res.json();
 }
-export const addMemberToGroup=async(
+export const addMemberToGroup = async (
     token,
     groupId,
     email
-)=>{
-    const res=await fetch(
+) => {
+    const res = await fetch(
         `${API_BASE}/group/${groupId}/add-member`,
         {
-            method:"POST",
-            headers:{
-                "Content-Type":"application/json",
-                Authorization:`Bearer ${token}`
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`
             },
-            body:JSON.stringify({email})
+            body: JSON.stringify({ email })
         }
-        
+
     );
     return await res.json();
 }
-export const removeMemberFromGroup=async(
+export const removeMemberFromGroup = async (
     token,
     groupId,
     email
-)=>{
-    const res=await fetch(
+) => {
+    const res = await fetch(
         `${API_BASE}/group/${groupId}/remove-member`,
         {
-            method:"POST",
-            headers:{
-                "Content-Type":"application/json",
-                Authorization:`Bearer ${token}`
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`
             },
-            body:JSON.stringify({
+            body: JSON.stringify({
                 email
             })
         }
     );
     return await res.json();
 }
-export const archiveChat=async(
+export const archiveChat = async (
     token,
     chatId,
     chatType
-)=>{
-    const res=await fetch(
+) => {
+    const res = await fetch(
         `${API_BASE}/archive`,
         {
-            method:"POST",
-            headers:{
-                "Content-Type":"application/json",
-                Authorization:`Bearer ${token}`
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`
             },
-            body:JSON.stringify({
+            body: JSON.stringify({
                 chatId,
                 chatType
             })
@@ -294,19 +295,19 @@ export const archiveChat=async(
     );
     return await res.json();
 }
-export const unarchiveChat=async(
+export const unarchiveChat = async (
     token,
     chatId
-)=>{
-    const res=await fetch(
+) => {
+    const res = await fetch(
         `${API_BASE}/unarchive`,
         {
-            method:"POST",
-            headers:{
-                "Content-Type":"application/json",
-                Authorization:`Bearer ${token}`
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`
             },
-            body:JSON.stringify({
+            body: JSON.stringify({
                 chatId
             })
         }
@@ -320,9 +321,8 @@ export const getArchivedChats=async(token)=>{
         headers:{
             Authorization: `Bearer ${token}`
         }
-    }
-  );
-  return await res.json();
+    );
+    return await res.json();
 }
 export async function uploadGroupPhoto(token, groupId, photo) {
 
@@ -340,24 +340,24 @@ export async function uploadGroupPhoto(token, groupId, photo) {
 
     return res.json();
 }
-export const starMessage=async(token,messageId)=>{
-    const res=await fetch(
+export const starMessage = async (token, messageId) => {
+    const res = await fetch(
         `${API_BASE}/message/${messageId}/star`,
         {
-            method:"POST",
-            headers:{
-                Authorization:`Bearer ${token}`
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${token}`
             }
         }
     );
     return await res.json();
 }
-export const fetchStarredMessages=async(token)=>{
-    const res=await fetch(
+export const fetchStarredMessages = async (token) => {
+    const res = await fetch(
         `${API_BASE}/messages/starred`,
         {
-            headers:{
-                Authorization:`Bearer ${token}`
+            headers: {
+                Authorization: `Bearer ${token}`
             }
         }
     );
@@ -471,7 +471,7 @@ export const extractTasks = async (token, { scope, targetEmail, groupId, source 
 };
 
 export const fetchCallHistory = async (token, targetEmail = "") => {
-    const url = targetEmail 
+    const url = targetEmail
         ? `${API_BASE}/call-history?with=${encodeURIComponent(targetEmail)}`
         : `${API_BASE}/call-history`;
     const res = await fetch(url, {

@@ -1,4 +1,9 @@
 
+import dns from 'dns';
+try {
+    dns.setServers(['8.8.8.8', '8.8.4.4', '1.1.1.1']);
+} catch (e) {}
+
 import express from 'express';
 import http from 'http';
 import { Server } from 'socket.io';
@@ -58,7 +63,7 @@ app.use(express.static(path.join(__dirname, '../')));
 const MONGO_URI = process.env.MONGO_URI || "mongodb://127.0.0.1:27017/chatapp";
 
 mongoose.connect(MONGO_URI)
-     .then(async () => {
+    .then(async () => {
         console.log("DB connected successfully to:", MONGO_URI.startsWith("mongodb+srv") ? "MongoDB Atlas (Cloud)" : MONGO_URI);
 
         await createAIUser();
@@ -71,10 +76,10 @@ const io = new Server(server, {// attach to existng server
         origin: "*"
     }
 });
-const loginLimiter=rateLimit({
-    windowMs:60*1000,
-    max:5,
-    message:{message:"Too many login attempts.Try again later."}
+const loginLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 5,
+    message: { message: "Too many login attempts.Try again later." }
 });
 
 const jwtSecret = process.env.JWT_SECRET || (process.env.NODE_ENV === 'production' ? null : "SECRET_KEY");
@@ -100,9 +105,9 @@ const serializeMessage = (messageDoc) => {
         from: String(messageDoc.from || ""),
         to: String(messageDoc.to || ""),
         message: String(messageDoc.message || ""),
-            replyTo: messageDoc.replyTo || null,
-            replyText: String(messageDoc.replyText || ""),
-            replySender: String(messageDoc.replySender || ""),
+        replyTo: messageDoc.replyTo || null,
+        replyText: String(messageDoc.replyText || ""),
+        replySender: String(messageDoc.replySender || ""),
         messageType: String(messageDoc.messageType || "text"),
         mediaUrl: String(messageDoc.mediaUrl || ""),
 
@@ -115,7 +120,7 @@ const serializeMessage = (messageDoc) => {
 
         createdAt: messageDoc.createdAt,
         clientMessageId: String(messageDoc.clientMessageId || ""),
-            status: String(messageDoc.status || "offline"),
+        status: String(messageDoc.status || "offline"),
         starred: !!messageDoc.starred,
         forwarded: !!messageDoc.forwarded,
         edited: !!messageDoc.edited,
@@ -132,163 +137,163 @@ const serializeMessage = (messageDoc) => {
     };
 };
 
-    const backupMessageFields = (message) => ({
-        from: message.from,
-        to: message.to,
-        message: message.message || "",
-        replyTo: message.replyTo ? String(message.replyTo) : null,
-        replyText: message.replyText || "",
-        replySender: message.replySender || "",
-        messageType: message.messageType || "text",
-        latitude: message.latitude ?? null,
-        longitude: message.longitude ?? null,
-        locationName: message.locationName || "",
-        isLive: !!message.isLive,
-        liveLocationId: message.liveLocationId || "",
-        expiresAt: message.expiresAt || null,
-        mediaUrl: message.mediaUrl || "",
-        fileName: message.fileName || "",
-        clientMessageId: message.clientMessageId || "",
-        starred: !!message.starred,
-        edited: !!message.edited,
-        forwarded: !!message.forwarded,
-        reactions: Array.isArray(message.reactions) ? message.reactions : [],
-        deletedForEveryone: !!message.deletedForEveryone,
-        createdAt: message.createdAt
-    });
+const backupMessageFields = (message) => ({
+    from: message.from,
+    to: message.to,
+    message: message.message || "",
+    replyTo: message.replyTo ? String(message.replyTo) : null,
+    replyText: message.replyText || "",
+    replySender: message.replySender || "",
+    messageType: message.messageType || "text",
+    latitude: message.latitude ?? null,
+    longitude: message.longitude ?? null,
+    locationName: message.locationName || "",
+    isLive: !!message.isLive,
+    liveLocationId: message.liveLocationId || "",
+    expiresAt: message.expiresAt || null,
+    mediaUrl: message.mediaUrl || "",
+    fileName: message.fileName || "",
+    clientMessageId: message.clientMessageId || "",
+    starred: !!message.starred,
+    edited: !!message.edited,
+    forwarded: !!message.forwarded,
+    reactions: Array.isArray(message.reactions) ? message.reactions : [],
+    deletedForEveryone: !!message.deletedForEveryone,
+    createdAt: message.createdAt
+});
 
-    const mediaMessageTypes = new Set(["image", "media", "video", "document", "voice"]);
-    const isMediaMessage = (message) => mediaMessageTypes.has(message.messageType) || Boolean(message.mediaUrl);
+const mediaMessageTypes = new Set(["image", "media", "video", "document", "voice"]);
+const isMediaMessage = (message) => mediaMessageTypes.has(message.messageType) || Boolean(message.mediaUrl);
 
-    const collectBackupData = async (owner, { withUser, groupId, includeMedia, settings = {} } = {}) => {
-        const groups = await Group.find({ members: owner }).select("_id name members admin photo").lean();
-        const groupIds = groups.map(group => String(group._id));
-        const target = withUser ? normalizeEmail(withUser) : null;
-        let query;
-        if (groupId) {
-            if (!groupIds.includes(String(groupId))) throw new Error("You are not a member of this group");
-            query = { to: String(groupId) };
-        } else if (target) {
-            query = { $or: [{ from: owner, to: target }, { from: target, to: owner }] };
-        } else {
-            query = {
-                $or: [
-                    { from: owner },
-                    { to: owner },
-                    ...(groupIds.length ? [{ to: { $in: groupIds } }] : [])
-                ]
-            };
-        }
-        const messages = await Message.find(query).sort({ createdAt: 1 }).lean();
-        const normalizedMessages = messages
-            .filter(message => message.from === owner || message.to === owner || groupIds.includes(String(message.to)))
-            .map(message => {
-                const backedUp = backupMessageFields(message);
-                if (!includeMedia) {
-                    backedUp.mediaUrl = "";
-                    backedUp.fileName = "";
-                }
-                return backedUp;
-            });
-        const conversations = [
-            ...groups.map(group => ({
-                type: "group",
-                id: String(group._id),
-                name: group.name,
-                members: group.members,
-                admin: group.admin,
-                photo: group.photo || ""
-            })),
-            ...[...new Set(normalizedMessages
-                .filter(message => !groupIds.includes(String(message.to)))
-                .map(message => message.from === owner ? message.to : message.from))]
-                .map(email => ({ type: "private", id: email }))
-        ];
-        const media = includeMedia
-            ? normalizedMessages
-                .filter(isMediaMessage)
-                .map(message => ({
-                    clientMessageId: message.clientMessageId,
-                    messageType: message.messageType,
-                    fileName: message.fileName,
-                    mediaUrl: message.mediaUrl
-                }))
-            : [];
-        return {
-            format: "chatapp-backup",
-            version: BACKUP_VERSION,
-            createdAt: new Date().toISOString(),
-            owner,
-            conversations,
-            messages: normalizedMessages,
-            media,
-            settings: {
-                theme: settings.theme === "light" ? "light" : "dark",
-                includeMedia: !!includeMedia
-            }
+const collectBackupData = async (owner, { withUser, groupId, includeMedia, settings = {} } = {}) => {
+    const groups = await Group.find({ members: owner }).select("_id name members admin photo").lean();
+    const groupIds = groups.map(group => String(group._id));
+    const target = withUser ? normalizeEmail(withUser) : null;
+    let query;
+    if (groupId) {
+        if (!groupIds.includes(String(groupId))) throw new Error("You are not a member of this group");
+        query = { to: String(groupId) };
+    } else if (target) {
+        query = { $or: [{ from: owner, to: target }, { from: target, to: owner }] };
+    } else {
+        query = {
+            $or: [
+                { from: owner },
+                { to: owner },
+                ...(groupIds.length ? [{ to: { $in: groupIds } }] : [])
+            ]
         };
+    }
+    const messages = await Message.find(query).sort({ createdAt: 1 }).lean();
+    const normalizedMessages = messages
+        .filter(message => message.from === owner || message.to === owner || groupIds.includes(String(message.to)))
+        .map(message => {
+            const backedUp = backupMessageFields(message);
+            if (!includeMedia) {
+                backedUp.mediaUrl = "";
+                backedUp.fileName = "";
+            }
+            return backedUp;
+        });
+    const conversations = [
+        ...groups.map(group => ({
+            type: "group",
+            id: String(group._id),
+            name: group.name,
+            members: group.members,
+            admin: group.admin,
+            photo: group.photo || ""
+        })),
+        ...[...new Set(normalizedMessages
+            .filter(message => !groupIds.includes(String(message.to)))
+            .map(message => message.from === owner ? message.to : message.from))]
+            .map(email => ({ type: "private", id: email }))
+    ];
+    const media = includeMedia
+        ? normalizedMessages
+            .filter(isMediaMessage)
+            .map(message => ({
+                clientMessageId: message.clientMessageId,
+                messageType: message.messageType,
+                fileName: message.fileName,
+                mediaUrl: message.mediaUrl
+            }))
+        : [];
+    return {
+        format: "chatapp-backup",
+        version: BACKUP_VERSION,
+        createdAt: new Date().toISOString(),
+        owner,
+        conversations,
+        messages: normalizedMessages,
+        media,
+        settings: {
+            theme: settings.theme === "light" ? "light" : "dark",
+            includeMedia: !!includeMedia
+        }
     };
+};
 
-    const restoreBackupData = async (owner, payload) => {
-        if (!payload || payload.format !== "chatapp-backup" || payload.version !== BACKUP_VERSION) {
-            throw new Error("Unsupported backup version or format");
+const restoreBackupData = async (owner, payload) => {
+    if (!payload || payload.format !== "chatapp-backup" || payload.version !== BACKUP_VERSION) {
+        throw new Error("Unsupported backup version or format");
+    }
+    const groups = await Group.find({ members: owner }).select("_id members").lean();
+    const groupIds = new Set(groups.map(group => String(group._id)));
+    const messages = Array.isArray(payload.messages) ? payload.messages : [];
+    let insertedCount = 0;
+    let skippedCount = 0;
+    for (const message of messages) {
+        const from = normalizeEmail(message.from);
+        const to = String(message.to || "");
+        const allowed = from === owner || to === owner || groupIds.has(to);
+        if (!allowed || !from || !to || (!message.message && !message.mediaUrl)) {
+            skippedCount++;
+            continue;
         }
-        const groups = await Group.find({ members: owner }).select("_id members").lean();
-        const groupIds = new Set(groups.map(group => String(group._id)));
-        const messages = Array.isArray(payload.messages) ? payload.messages : [];
-        let insertedCount = 0;
-        let skippedCount = 0;
-        for (const message of messages) {
-            const from = normalizeEmail(message.from);
-            const to = String(message.to || "");
-            const allowed = from === owner || to === owner || groupIds.has(to);
-            if (!allowed || !from || !to || (!message.message && !message.mediaUrl)) {
-                skippedCount++;
-                continue;
-            }
-            const duplicate = await Message.exists({
-                from,
-                to,
-                createdAt: new Date(message.createdAt),
-                message: message.message || "",
-                clientMessageId: message.clientMessageId || ""
-            });
-            if (duplicate) {
-                skippedCount++;
-                continue;
-            }
-            await Message.create({
-                from,
-                to,
-                message: message.message || "",
-                replyText: message.replyText || "",
-                replySender: message.replySender || "",
-                messageType: message.messageType || "text",
-                latitude: message.latitude ?? null,
-                longitude: message.longitude ?? null,
-                locationName: message.locationName || "",
-                isLive: !!message.isLive,
-                liveLocationId: message.liveLocationId || "",
-                expiresAt: message.expiresAt || null,
-                mediaUrl: message.mediaUrl || "",
-                fileName: message.fileName || "",
-                clientMessageId: message.clientMessageId || "",
-                starred: !!message.starred,
-                edited: !!message.edited,
-                forwarded: !!message.forwarded,
-                reactions: Array.isArray(message.reactions) ? message.reactions : [],
-                deletedForEveryone: !!message.deletedForEveryone,
-                createdAt: new Date(message.createdAt)
-            });
-            insertedCount++;
+        const duplicate = await Message.exists({
+            from,
+            to,
+            createdAt: new Date(message.createdAt),
+            message: message.message || "",
+            clientMessageId: message.clientMessageId || ""
+        });
+        if (duplicate) {
+            skippedCount++;
+            continue;
         }
-        return {
-            insertedCount,
-            skippedCount,
-            total: messages.length,
-            settings: payload.settings || {}
-        };
+        await Message.create({
+            from,
+            to,
+            message: message.message || "",
+            replyText: message.replyText || "",
+            replySender: message.replySender || "",
+            messageType: message.messageType || "text",
+            latitude: message.latitude ?? null,
+            longitude: message.longitude ?? null,
+            locationName: message.locationName || "",
+            isLive: !!message.isLive,
+            liveLocationId: message.liveLocationId || "",
+            expiresAt: message.expiresAt || null,
+            mediaUrl: message.mediaUrl || "",
+            fileName: message.fileName || "",
+            clientMessageId: message.clientMessageId || "",
+            starred: !!message.starred,
+            edited: !!message.edited,
+            forwarded: !!message.forwarded,
+            reactions: Array.isArray(message.reactions) ? message.reactions : [],
+            deletedForEveryone: !!message.deletedForEveryone,
+            createdAt: new Date(message.createdAt)
+        });
+        insertedCount++;
+    }
+    return {
+        insertedCount,
+        skippedCount,
+        total: messages.length,
+        settings: payload.settings || {}
     };
+};
 
 const isStrongPassword = (password) => {
     if (typeof password !== "string") return false;
@@ -493,12 +498,12 @@ const createAIUser = async () => {
     }
 
 };
-function logLoginAttempt(email,success,ip){
+function logLoginAttempt(email, success, ip) {
     console.log({
         email,
         success,
         ip,
-        time:new Date().toISOString()
+        time: new Date().toISOString()
     });
 }
 
@@ -600,22 +605,22 @@ io.on("connection", (socket) => {
 
     })
 
-    socket.on("privateMessage", async ({ to, message = "", messageType = "text", mediaUrl = "", fileName = "", clientMessageId = "",replyTo=null,replyText="",replySender="" ,forwarded=false,latitude = null,longitude = null,locationName = "",
-    isLive = false,
-    liveLocationId = "",
-    expiresAt = null,
-    isEncrypted = false, ciphertext = "", ciphertextType = 0, senderDeviceId = null, recipientDeviceId = null, encryptedPayload = null, encryptionVersion = 1 }) => {
+    socket.on("privateMessage", async ({ to, message = "", messageType = "text", mediaUrl = "", fileName = "", clientMessageId = "", replyTo = null, replyText = "", replySender = "", forwarded = false, latitude = null, longitude = null, locationName = "",
+        isLive = false,
+        liveLocationId = "",
+        expiresAt = null,
+        isEncrypted = false, ciphertext = "", ciphertextType = 0, senderDeviceId = null, recipientDeviceId = null, encryptedPayload = null, encryptionVersion = 1 }) => {
 
         console.log("PRIVATE LOCATION:", {
-    messageType,
-    latitude,
-    longitude
-});
+            messageType,
+            latitude,
+            longitude
+        });
         console.log("Forwarded received:", forwarded);
         const from = users[socket.id];
         const targetEmail = normalizeEmail(to);
         const senderEmail = normalizeEmail(from?.email);
-        const allowedMsgTypes = ["text", "image", "video", "document","audio","voice","location"];
+        const allowedMsgTypes = ["text", "image", "video", "document", "audio", "voice", "location"];
         const safeMessageType = allowedMsgTypes.includes(messageType) ? messageType : "text";
         const text = String(message || "").trim();
         const media = String(mediaUrl || "");
@@ -700,7 +705,7 @@ io.on("connection", (socket) => {
                 replyTo,
                 replyText: enc ? "" : replyText,
                 replySender: enc ? "" : replySender,
-              
+
                 messageType: enc ? "encrypted" : safeMessageType,
                 mediaUrl: enc ? "" : media,
                 fileName: enc ? "" : fileName,
@@ -888,7 +893,7 @@ io.on("connection", (socket) => {
                 { _id: { $in: messageIds }, to: me },
                 { $set: { status: "seen" } }
             );
-            
+
             // Notify original sender
             const senderSockets = Object.keys(users).filter(
                 key => users[key]?.email === fromEmail
@@ -925,26 +930,26 @@ io.on("connection", (socket) => {
             console.log("Delete error:", err);
         }
     });
-    socket.on("groupMessage",async({groupId,message,messageType="text",mediaUrl="",fileName="",forwarded=false,replyTo = null,replyText = "",replySender = "",
-    latitude = null,
-    longitude = null,
-    locationName = "",
-    isLive = false,
-    liveLocationId = "",
-    expiresAt = null,
-    isEncrypted = false, ciphertext = "", ciphertextType = 0, senderDeviceId = null, encryptedPayload = null, encryptionVersion = 1 })=>{
+    socket.on("groupMessage", async ({ groupId, message, messageType = "text", mediaUrl = "", fileName = "", forwarded = false, replyTo = null, replyText = "", replySender = "",
+        latitude = null,
+        longitude = null,
+        locationName = "",
+        isLive = false,
+        liveLocationId = "",
+        expiresAt = null,
+        isEncrypted = false, ciphertext = "", ciphertextType = 0, senderDeviceId = null, encryptedPayload = null, encryptionVersion = 1 }) => {
 
         console.log("GROUP LOCATION:", {
-    messageType,
-    latitude,
-    longitude
-});
-        try{
-            const group=await Group.findById(groupId);
+            messageType,
+            latitude,
+            longitude
+        });
+        try {
+            const group = await Group.findById(groupId);
 
-            if(!group) return;
+            if (!group) return;
 
-            const sender=socket.user.email;
+            const sender = socket.user.email;
             if (!group.members.includes(sender)) {
                 socket.emit("messageStatus", {
                     ok: false,
@@ -952,11 +957,11 @@ io.on("connection", (socket) => {
                 });
                 return;
             }
-            const allowedTypes = ["text", "image", "video", "document","audio","voice","location"];
+            const allowedTypes = ["text", "image", "video", "document", "audio", "voice", "location"];
 
             const safeMessageType = allowedTypes.includes(messageType)
-            ? messageType
-            : "text";
+                ? messageType
+                : "text";
 
             const media = String(mediaUrl || "");
 
@@ -971,9 +976,9 @@ io.on("connection", (socket) => {
                 return;
             }
 
-            const saved=await Message.create({
-                from:sender,
-                to:groupId,
+            const saved = await Message.create({
+                from: sender,
+                to: groupId,
                 message: enc ? "" : message,
                 messageType: enc ? "encrypted" : safeMessageType,
                 mediaUrl: enc ? "" : mediaUrl,
@@ -998,258 +1003,199 @@ io.on("connection", (socket) => {
                 encryptedPayload: enc ? (encryptedPayload || null) : null
             });
 
-            const payload={
+            const payload = {
                 ...serializeMessage(saved),
                 groupId
             };
 
-            group.members.forEach(member=>{
-                const sockets=Object.keys(users).filter(
-                    id=>users[id]?.email===member
+            group.members.forEach(member => {
+                const sockets = Object.keys(users).filter(
+                    id => users[id]?.email === member
                 );
-                sockets.forEach(id=>{
-                    io.to(id).emit("receiveGroupMessage",payload);
+                sockets.forEach(id => {
+                    io.to(id).emit("receiveGroupMessage", payload);
                 });
             });
 
-        }catch(err){
+        } catch (err) {
             console.log(err);
         }
     })
     socket.on("liveLocationUpdated", (data) => {
 
-    setMessages(prev =>
+        setMessages(prev =>
 
-        prev.map(msg =>
+            prev.map(msg =>
 
-            msg.liveLocationId === data.liveLocationId
+                msg.liveLocationId === data.liveLocationId
 
-                ? {
+                    ? {
 
-                    ...msg,
+                        ...msg,
 
-                    latitude: data.latitude,
+                        latitude: data.latitude,
 
-                    longitude: data.longitude,
+                        longitude: data.longitude,
 
-                    expiresAt: data.expiresAt,
+                        expiresAt: data.expiresAt,
 
-                    isLive: true
+                        isLive: true
 
-                }
+                    }
 
-                : msg
+                    : msg
 
-        )
+            )
 
-    );
-
-});
-   socket.on("privateLiveLocation", async ({
-    to,
-    latitude,
-    longitude,
-    liveLocationId,
-    expiresAt
-}) => {
-
-    try {
-
-       const sender = socket.user.email;
-       const receiverSockets = Object.keys(users).filter(
-            id => users[id]?.email === to
         );
 
-let liveMessage = await Message.findOne({
-
-    liveLocationId,
-
-    from: sender,
-
-    to
-
-});
-
-if (!liveMessage) {
-
-    liveMessage = await Message.create({
-
-        from: sender,
-
+    });
+    socket.on("privateLiveLocation", async ({
         to,
-
-        message: "",
-
-        messageType: "location",
-
         latitude,
-
         longitude,
-
-        isLive: true,
-
         liveLocationId,
-
         expiresAt
+    }) => {
 
-    });
-    receiverSockets.forEach(id => {
+        try {
 
-    io.to(id).emit("liveLocationStarted", {
-
-        from: sender
-
-    });
-
-});
-
-}else {
-
-    liveMessage.latitude = latitude;
-
-    liveMessage.longitude = longitude;
-
-    await liveMessage.save();
-
-}
-
-        
-
-  const payload = {
-
-    _id: liveMessage._id,
-
-    from: sender,
-
-    to,
-
-    messageType: "location",
-
-    latitude,
-
-    longitude,
-
-    isLive: true,
-
-    liveLocationId,
-
-    expiresAt
-
-};
-
-        receiverSockets.forEach(id => {
-            io.to(id).emit("liveLocationUpdated", payload);
-        });
-
-        // Send to sender's other tabs too
-        const senderSockets = Object.keys(users).filter(
-            id => users[id]?.email === sender
-        );
-
-        senderSockets.forEach(id => {
-            io.to(id).emit("liveLocationUpdated", {
-                ...payload,
-                fromSelf: true
-            });
-        });
-
-    } catch (err) {
-
-        console.error(err);
-
-    }
-
-});
-    socket.on("groupLiveLocation", async ({
-    groupId,
-    latitude,
-    longitude,
-    liveLocationId,
-    expiresAt
-}) => {
-
-    try {
-
-        const group = await Group.findById(groupId);
-
-        if (!group) return;
-
-        const sender = socket.user.email;
-
-        const payload = {
-
-            groupId,
-
-            from: sender,
-
-            latitude,
-
-            longitude,
-
-            liveLocationId,
-
-            expiresAt
-
-        };
-
-        group.members.forEach(member => {
-
-            const sockets = Object.keys(users).filter(
-                id => users[id]?.email === member
+            const sender = socket.user.email;
+            const receiverSockets = Object.keys(users).filter(
+                id => users[id]?.email === to
             );
 
-            sockets.forEach(id => {
+            let liveMessage = await Message.findOne({
 
-                io.to(id).emit(
-                    "liveLocationUpdated",
-                    payload
-                );
+                liveLocationId,
+
+                from: sender,
+
+                to
 
             });
 
-        });
+            if (!liveMessage) {
 
-    } catch (err) {
+                liveMessage = await Message.create({
 
-        console.error(err);
+                    from: sender,
 
-    }
+                    to,
 
-});
-socket.on("stopLiveLocation", async ({ liveLocationId }) => {
+                    message: "",
 
-    try {
+                    messageType: "location",
 
-        const message = await Message.findOne({
-            liveLocationId
-        });
+                    latitude,
 
-        if (!message) return;
+                    longitude,
 
-        message.isLive = false;
+                    isLive: true,
 
-        await message.save();
+                    liveLocationId,
 
-        const payload = {
+                    expiresAt
 
-    liveLocationId,
+                });
+                receiverSockets.forEach(id => {
 
-    isLive: false,
+                    io.to(id).emit("liveLocationStarted", {
 
-    from: message.from
+                        from: sender
 
-};
+                    });
 
-        // Group message
-        let group = null;
+                });
 
-        if (mongoose.Types.ObjectId.isValid(message.to)) {
+            } else {
 
-            group = await Group.findById(message.to);
+                liveMessage.latitude = latitude;
+
+                liveMessage.longitude = longitude;
+
+                await liveMessage.save();
+
+            }
+
+
+
+            const payload = {
+
+                _id: liveMessage._id,
+
+                from: sender,
+
+                to,
+
+                messageType: "location",
+
+                latitude,
+
+                longitude,
+
+                isLive: true,
+
+                liveLocationId,
+
+                expiresAt
+
+            };
+
+            receiverSockets.forEach(id => {
+                io.to(id).emit("liveLocationUpdated", payload);
+            });
+
+            // Send to sender's other tabs too
+            const senderSockets = Object.keys(users).filter(
+                id => users[id]?.email === sender
+            );
+
+            senderSockets.forEach(id => {
+                io.to(id).emit("liveLocationUpdated", {
+                    ...payload,
+                    fromSelf: true
+                });
+            });
+
+        } catch (err) {
+
+            console.error(err);
 
         }
 
-        if (group) {
+    });
+    socket.on("groupLiveLocation", async ({
+        groupId,
+        latitude,
+        longitude,
+        liveLocationId,
+        expiresAt
+    }) => {
+
+        try {
+
+            const group = await Group.findById(groupId);
+
+            if (!group) return;
+
+            const sender = socket.user.email;
+
+            const payload = {
+
+                groupId,
+
+                from: sender,
+
+                latitude,
+
+                longitude,
+
+                liveLocationId,
+
+                expiresAt
+
+            };
 
             group.members.forEach(member => {
 
@@ -1260,7 +1206,7 @@ socket.on("stopLiveLocation", async ({ liveLocationId }) => {
                 sockets.forEach(id => {
 
                     io.to(id).emit(
-                        "liveLocationStopped",
+                        "liveLocationUpdated",
                         payload
                     );
 
@@ -1268,228 +1214,333 @@ socket.on("stopLiveLocation", async ({ liveLocationId }) => {
 
             });
 
-        } else {
+        } catch (err) {
 
-            // Private chat
-
-            const senderSockets = Object.keys(users).filter(
-                id => users[id]?.email === message.from
-            );
-
-            const receiverSockets = Object.keys(users).filter(
-                id => users[id]?.email === message.to
-            );
-
-            senderSockets.forEach(id => {
-
-                io.to(id).emit(
-                    "liveLocationStopped",
-                    payload
-                );
-
-            });
-
-            receiverSockets.forEach(id => {
-
-                io.to(id).emit(
-                    "liveLocationStopped",
-                    payload
-                );
-
-            });
+            console.error(err);
 
         }
 
-    } catch (err) {
+    });
+    socket.on("stopLiveLocation", async ({ liveLocationId }) => {
 
-        console.error(err);
+        try {
 
-    }
+            const message = await Message.findOne({
+                liveLocationId
+            });
 
-});
-    socket.on("deleteForMe", async ({ messageId }) => {
-    try {
+            if (!message) return;
 
-        const message = await Message.findById(messageId);
+            message.isLive = false;
 
-        if (!message) return;
+            await message.save();
 
-       await DeletedMessage.findOneAndUpdate(
-    {
-        user: socket.user.email,
-        messageId
-    },
-    {},
-    {
-        upsert: true,
-        new: true
-    }
-);
- 
+            const payload = {
 
+                liveLocationId,
 
-        socket.emit("messageDeletedForMe", {
-            messageId
-        });
+                isLive: false,
 
-    } catch (err) {
-        console.error("Delete for me error:", err);
-    }
-});
-    socket.on("reactMessage", async ({ messageId, emoji }) => {
+                from: message.from
 
-    try {
+            };
 
-        const message = await Message.findById(messageId);
+            // Group message
+            let group = null;
 
-        if (!message) return;
+            if (mongoose.Types.ObjectId.isValid(message.to)) {
 
-        const me = socket.user.email;
-
-        // Find existing reaction by this user
-        let action="";
-        const existing = message.reactions.find(
-            reaction => reaction.user === me
-        );
-        
-
-        if (existing) {
-
-            // Same emoji clicked → remove reaction
-            if (existing.emoji === emoji) {
-
-                message.reactions = message.reactions.filter(
-                    reaction => reaction.user !== me
-                );
-                action="removed";
-
-            } else {
-
-                // Change reaction
-                existing.emoji = emoji;
-                action="changed";
+                group = await Group.findById(message.to);
 
             }
 
-        } else {
+            if (group) {
 
-            // First reaction
-            message.reactions.push({
-                user: me,
-                name: socket.user.name,
-                emoji
-            });
-            action="added";
+                group.members.forEach(member => {
 
-        }
+                    const sockets = Object.keys(users).filter(
+                        id => users[id]?.email === member
+                    );
 
-        await message.save();
+                    sockets.forEach(id => {
 
-        const payload = {
-            messageId,
-            reactions: message.reactions,
+                        io.to(id).emit(
+                            "liveLocationStopped",
+                            payload
+                        );
 
-             reactedBy: socket.user.email,
-            emoji,
+                    });
 
-    messageOwner: message.from,
-     action
-        };
+                });
 
-        // ---------- GROUP ----------
-        let group = null;
+            } else {
 
-        if (mongoose.Types.ObjectId.isValid(message.to)) {
-            group = await Group.findById(message.to);
-        }
+                // Private chat
 
-        if (group) {
-
-            group.members.forEach(member => {
-
-                const sockets = Object.keys(users).filter(
-                    id => users[id]?.email === member
+                const senderSockets = Object.keys(users).filter(
+                    id => users[id]?.email === message.from
                 );
 
-                sockets.forEach(id => {
+                const receiverSockets = Object.keys(users).filter(
+                    id => users[id]?.email === message.to
+                );
+
+                senderSockets.forEach(id => {
+
+                    io.to(id).emit(
+                        "liveLocationStopped",
+                        payload
+                    );
+
+                });
+
+                receiverSockets.forEach(id => {
+
+                    io.to(id).emit(
+                        "liveLocationStopped",
+                        payload
+                    );
+
+                });
+
+            }
+
+        } catch (err) {
+
+            console.error(err);
+
+        }
+
+    });
+    socket.on("deleteForMe", async ({ messageId }) => {
+        try {
+
+            const message = await Message.findById(messageId);
+
+            if (!message) return;
+
+            await DeletedMessage.findOneAndUpdate(
+                {
+                    user: socket.user.email,
+                    messageId
+                },
+                {},
+                {
+                    upsert: true,
+                    new: true
+                }
+            );
+
+
+
+            socket.emit("messageDeletedForMe", {
+                messageId
+            });
+
+        } catch (err) {
+            console.error("Delete for me error:", err);
+        }
+    });
+    socket.on("reactMessage", async ({ messageId, emoji }) => {
+
+        try {
+
+            const message = await Message.findById(messageId);
+
+            if (!message) return;
+
+            const me = socket.user.email;
+
+            // Find existing reaction by this user
+            let action = "";
+            const existing = message.reactions.find(
+                reaction => reaction.user === me
+            );
+
+
+            if (existing) {
+
+                // Same emoji clicked → remove reaction
+                if (existing.emoji === emoji) {
+
+                    message.reactions = message.reactions.filter(
+                        reaction => reaction.user !== me
+                    );
+                    action = "removed";
+
+                } else {
+
+                    // Change reaction
+                    existing.emoji = emoji;
+                    action = "changed";
+
+                }
+
+            } else {
+
+                // First reaction
+                message.reactions.push({
+                    user: me,
+                    name: socket.user.name,
+                    emoji
+                });
+                action = "added";
+
+            }
+
+            await message.save();
+
+            const payload = {
+                messageId,
+                reactions: message.reactions,
+
+                reactedBy: socket.user.email,
+                emoji,
+
+                messageOwner: message.from,
+                action
+            };
+
+            // ---------- GROUP ----------
+            let group = null;
+
+            if (mongoose.Types.ObjectId.isValid(message.to)) {
+                group = await Group.findById(message.to);
+            }
+
+            if (group) {
+
+                group.members.forEach(member => {
+
+                    const sockets = Object.keys(users).filter(
+                        id => users[id]?.email === member
+                    );
+
+                    sockets.forEach(id => {
+                        io.to(id).emit("messageReaction", payload);
+                    });
+
+                });
+
+            } else {
+
+                // ---------- PRIVATE ----------
+                const senderSockets = Object.keys(users).filter(
+                    id => users[id]?.email === message.from
+                );
+
+                const receiverSockets = Object.keys(users).filter(
+                    id => users[id]?.email === message.to
+                );
+
+                senderSockets.forEach(id => {
                     io.to(id).emit("messageReaction", payload);
                 });
 
-            });
+                receiverSockets.forEach(id => {
+                    io.to(id).emit("messageReaction", payload);
+                });
 
-        } else {
+            }
 
-            // ---------- PRIVATE ----------
-            const senderSockets = Object.keys(users).filter(
-                id => users[id]?.email === message.from
-            );
+        } catch (err) {
 
-            const receiverSockets = Object.keys(users).filter(
-                id => users[id]?.email === message.to
-            );
-
-            senderSockets.forEach(id => {
-                io.to(id).emit("messageReaction", payload);
-            });
-
-            receiverSockets.forEach(id => {
-                io.to(id).emit("messageReaction", payload);
-            });
+            console.error("Reaction error:", err);
 
         }
 
-    } catch (err) {
+    });
+    socket.on("deleteForEveryone", async ({ messageId }) => {
 
-        console.error("Reaction error:", err);
+        try {
 
-    }
+            const message = await Message.findById(messageId);
 
-});
-   socket.on("deleteForEveryone", async ({ messageId }) => {
-            
-    try {
+            if (!message) return;
 
-        const message = await Message.findById(messageId);
+            // Only the sender can delete the message
+            if (message.from !== socket.user.email) {
+                return;
+            }
 
-        if (!message) return;
+            message.deletedForEveryone = true;
+            message.deletedAt = new Date();
 
-        // Only the sender can delete the message
-        if (message.from !== socket.user.email) {
-            return;
-        }
+            await message.save();
 
-        message.deletedForEveryone = true;
-        message.deletedAt = new Date();
+            const payload = {
+                messageId,
+                deletedForEveryone: true
+            };
 
-        await message.save();
+            // Check if it's a group message
+            let group = null;
+            if (mongoose.Types.ObjectId.isValid(message.to)) {
+                group = await Group.findById(message.to);
+            }
+            if (group) {
 
-        const payload = {
-            messageId,
-            deletedForEveryone: true
-        };
+                group.members.forEach(member => {
 
-        // Check if it's a group message
-        let group=null;
-      if (mongoose.Types.ObjectId.isValid(message.to)) {
-    group = await Group.findById(message.to);
-            }           
-        if (group) {
+                    const sockets = Object.keys(users).filter(
+                        id => users[id]?.email === member
+                    );
 
-            group.members.forEach(member => {
+                    sockets.forEach(id => {
+                        io.to(id).emit("messageDeletedForEveryone", payload);
+                    });
 
-                const sockets = Object.keys(users).filter(
-                    id => users[id]?.email === member
+                });
+
+            } else {
+
+                // Private chat
+                const senderSockets = Object.keys(users).filter(
+                    id => users[id]?.email === message.from
                 );
 
-                sockets.forEach(id => {
+                const receiverSockets = Object.keys(users).filter(
+                    id => users[id]?.email === message.to
+                );
+
+                senderSockets.forEach(id => {
                     io.to(id).emit("messageDeletedForEveryone", payload);
                 });
 
-            });
+                receiverSockets.forEach(id => {
+                    io.to(id).emit("messageDeletedForEveryone", payload);
+                });
 
-        } else {
+            }
 
-            // Private chat
+        } catch (err) {
+            console.error("========== DELETE FOR EVERYONE ERROR ==========");
+            console.error(err);
+            console.error(err.stack);
+            console.error("===============================================");
+        }
+    });
+
+    socket.on("editMessage", async ({ messageId, newMessage }) => {
+        try {
+            const message = await Message.findById(messageId);
+            if (!message) return;
+            if (message.from !== socket.user.email) {
+                return;
+            }
+            if (!newMessage.trim()) {
+                socket.emit("editFailed", {
+                    message: "Message cannot be empty"
+                });
+                return;
+            }
+
+
+
+            message.message = newMessage;
+            message.edited = true;
+            await message.save();
+
             const senderSockets = Object.keys(users).filter(
                 id => users[id]?.email === message.from
             );
@@ -1498,101 +1549,55 @@ socket.on("stopLiveLocation", async ({ liveLocationId }) => {
                 id => users[id]?.email === message.to
             );
 
-            senderSockets.forEach(id => {
-                io.to(id).emit("messageDeletedForEveryone", payload);
-            });
+            const payload = {
+                messageId,
+                message: message.message,
+                edited: true
+            };
 
-            receiverSockets.forEach(id => {
-                io.to(id).emit("messageDeletedForEveryone", payload);
-            });
+            // Check whether "to" is a group ID
+            let group = null;
+            if (mongoose.Types.ObjectId.isValid(message.to)) {
+                group = await Group.findById(message.to);
+            }
 
-        }
+            if (group) {
 
-    } catch (err) {
-    console.error("========== DELETE FOR EVERYONE ERROR ==========");
-    console.error(err);
-    console.error(err.stack);
-    console.error("===============================================");
-}
-   });
+                // Group message
+                group.members.forEach(member => {
 
-    socket.on("editMessage",async({messageId,newMessage})=>{
-        try{
-            const message=await Message.findById(messageId);
-              if(!message) return;
-            if (message.from !== socket.user.email) {
-                return;
-                }
-            if (!newMessage.trim()) {
-            socket.emit("editFailed", {
-          message: "Message cannot be empty"
-                     });
-                return;
-}
+                    const sockets = Object.keys(users).filter(
+                        id => users[id]?.email === member
+                    );
 
-          
+                    sockets.forEach(id => {
+                        io.to(id).emit("messageEdited", payload);
+                    });
 
-            message.message=newMessage;
-            message.edited=true;
-            await message.save();
+                });
 
-          const senderSockets = Object.keys(users).filter(
-    id => users[id]?.email === message.from
-);
+            } else {
 
-const receiverSockets = Object.keys(users).filter(
-    id => users[id]?.email === message.to
-);
+                // Private message
+                const senderSockets = Object.keys(users).filter(
+                    id => users[id]?.email === message.from
+                );
 
-const payload = {
-    messageId,
-    message: message.message,
-    edited: true
-};
+                const receiverSockets = Object.keys(users).filter(
+                    id => users[id]?.email === message.to
+                );
 
-// Check whether "to" is a group ID
-   let group=null;
-      if (mongoose.Types.ObjectId.isValid(message.to)) {
-    group = await Group.findById(message.to);
-            }    
+                senderSockets.forEach(id => {
+                    io.to(id).emit("messageEdited", payload);
+                });
 
-if (group) {
+                receiverSockets.forEach(id => {
+                    io.to(id).emit("messageEdited", payload);
+                });
 
-    // Group message
-    group.members.forEach(member => {
-
-        const sockets = Object.keys(users).filter(
-            id => users[id]?.email === member
-        );
-
-        sockets.forEach(id => {
-            io.to(id).emit("messageEdited", payload);
-        });
-
-    });
-
-} else {
-
-    // Private message
-    const senderSockets = Object.keys(users).filter(
-        id => users[id]?.email === message.from
-    );
-
-    const receiverSockets = Object.keys(users).filter(
-        id => users[id]?.email === message.to
-    );
-
-    senderSockets.forEach(id => {
-        io.to(id).emit("messageEdited", payload);
-    });
-
-    receiverSockets.forEach(id => {
-        io.to(id).emit("messageEdited", payload);
-    });
-
-}
-        }catch(err){
-            console.error("Edit message error:",err);
+            }
+        } catch (err) {
+            console.error("Edit message error:", err);
         }
     });
     socket.on("groupSenderKeyDistribution", async ({ groupId, distributionId, distributionMessage, senderDeviceId }) => {
@@ -1615,10 +1620,10 @@ if (group) {
     });
 
     registerCallSocket(
-    io,
-    socket,
-    users
-);
+        io,
+        socket,
+        users
+    );
 }
 );
 app.get("/search", requireAuth, async (req, res) => {
@@ -1656,26 +1661,26 @@ app.get("/search", requireAuth, async (req, res) => {
                 })
             ]);
 
-         return {
-    ...sanitized,
-    lastMessage: lastMsg ? serializeMessage(lastMsg) : null,
-    lastMessageTime: lastMsg ? lastMsg.createdAt : null,
-    unreadCount: unreadCount || 0
-};
+            return {
+                ...sanitized,
+                lastMessage: lastMsg ? serializeMessage(lastMsg) : null,
+                lastMessageTime: lastMsg ? lastMsg.createdAt : null,
+                unreadCount: unreadCount || 0
+            };
         }));
         enhancedUsers.sort((a, b) => {
 
-    const t1 = a?.lastMessageTime
-        ? new Date(a.lastMessageTime).getTime()
-        : 0;
+            const t1 = a?.lastMessageTime
+                ? new Date(a.lastMessageTime).getTime()
+                : 0;
 
-    const t2 = b?.lastMessageTime
-        ? new Date(b.lastMessageTime).getTime()
-        : 0;
+            const t2 = b?.lastMessageTime
+                ? new Date(b.lastMessageTime).getTime()
+                : 0;
 
-    return t2 - t1;
+            return t2 - t1;
 
-});
+        });
 
         res.json(enhancedUsers.filter(Boolean));
     } catch (err) {
@@ -1691,68 +1696,68 @@ app.get("/messages", requireAuth, async (req, res) => {
     }
 
     try {
-       const deletedMessages = await DeletedMessage.find({
-    user: req.user.email
-});
+        const deletedMessages = await DeletedMessage.find({
+            user: req.user.email
+        });
 
-const deletedIds = deletedMessages.map(
-    item => item.messageId
-);
+        const deletedIds = deletedMessages.map(
+            item => item.messageId
+        );
 
-const messages = await Message.find({
+        const messages = await Message.find({
 
-    _id: {
-        $nin: deletedIds
-    },
+            _id: {
+                $nin: deletedIds
+            },
 
-    $or: [
-        {
-            from: req.user.email,
-            to: withUser
-        },
-        {
-            from: withUser,
-            to: req.user.email
-        }
-    ]
+            $or: [
+                {
+                    from: req.user.email,
+                    to: withUser
+                },
+                {
+                    from: withUser,
+                    to: req.user.email
+                }
+            ]
 
-}).sort({
-    createdAt: 1
-});
+        }).sort({
+            createdAt: 1
+        });
         res.json(
-    messages.map(msg => ({
-        _id: msg._id,
-        from: msg.from,
-        to: msg.to,
-        message: msg.message,
+            messages.map(msg => ({
+                _id: msg._id,
+                from: msg.from,
+                to: msg.to,
+                message: msg.message,
 
-        replyTo: msg.replyTo,
-        replyText: msg.replyText,
-        replySender: msg.replySender,
+                replyTo: msg.replyTo,
+                replyText: msg.replyText,
+                replySender: msg.replySender,
 
-        messageType: msg.messageType,
-        mediaUrl: msg.mediaUrl,
-        fileName: msg.fileName,
+                messageType: msg.messageType,
+                mediaUrl: msg.mediaUrl,
+                fileName: msg.fileName,
 
 
-        latitude: msg.latitude,
-        longitude: msg.longitude,
-        locationName: msg.locationName,
-        isLive: msg.isLive,
-        liveLocationId: msg.liveLocationId,
-        expiresAt: msg.expiresAt,
+                latitude: msg.latitude,
+                longitude: msg.longitude,
+                locationName: msg.locationName,
+                isLive: msg.isLive,
+                liveLocationId: msg.liveLocationId,
+                expiresAt: msg.expiresAt,
 
-        clientMessageId: msg.clientMessageId,
-        status: msg.status,
-        starred: msg.starred,
-        edited: msg.edited,   
-        forwarded: msg.forwarded,
-        deletedForEveryone: msg.deletedForEveryone,
-        reactions: msg.reactions,
-        deletedAt: msg.deletedAt,
-        createdAt: msg.createdAt
-    }))
-);
+                clientMessageId: msg.clientMessageId,
+                status: msg.status,
+                starred: msg.starred,
+                edited: msg.edited,
+                forwarded: msg.forwarded,
+                deletedForEveryone: msg.deletedForEveryone,
+                reactions: msg.reactions,
+                deletedAt: msg.deletedAt,
+                createdAt: msg.createdAt
+            }))
+        );
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -1765,11 +1770,11 @@ app.post("/messages", (req, res, next) => {
 }, requireAuth, async (req, res) => {
     const senderEmail = req.user.email;
     const targetEmail = normalizeEmail(req.body?.to);
-const allowedTypes = ["text", "image", "video", "document", "audio", "voice"];
+    const allowedTypes = ["text", "image", "video", "document", "audio", "voice"];
 
-const safeMessageType = allowedTypes.includes(req.body?.messageType)
-    ? req.body.messageType
-    : "text";
+    const safeMessageType = allowedTypes.includes(req.body?.messageType)
+        ? req.body.messageType
+        : "text";
     const text = String(req.body?.message || "").trim();
     const media = String(req.body?.mediaUrl || "");
     const clientMessageId = String(req.body?.clientMessageId || "");
@@ -1896,7 +1901,7 @@ app.post("/signup", async (req, res) => {
         if (existingUser) {
             return res.json({ message: "User already exists" });
         }
-        const hashedPassword=await bcrypt.hash(password,10);
+        const hashedPassword = await bcrypt.hash(password, 10);
         const newUser = new User({
             name: safeName,
             email: safeEmail,
@@ -2082,44 +2087,44 @@ app.post("/auth/google", async (req, res) => {
         return res.status(500).json({ message: "Google authentication failed" });
     }
 });
-app.post("/forgot-password",async(req,res)=>{
+app.post("/forgot-password", async (req, res) => {
     try {
         const safeEmail = normalizeEmail(req.body?.email);
-        const user=await User.findOne({ email: safeEmail });
-        if(!user){
-            return res.json({message:"user not found"});
+        const user = await User.findOne({ email: safeEmail });
+        if (!user) {
+            return res.json({ message: "user not found" });
         }
-        const token=crypto.randomBytes(32).toString("hex");
-        user.resetToken=token;
-        user.resetTokenExpiry=Date.now()+10*60*1000;
+        const token = crypto.randomBytes(32).toString("hex");
+        user.resetToken = token;
+        user.resetTokenExpiry = Date.now() + 10 * 60 * 1000;
         await user.save();
         res.json({
-            message:"Reset token generated",
-            token:token
+            message: "Reset token generated",
+            token: token
         });
     } catch (err) {
         res.status(500).json({ message: "Failed to generate reset token" });
     }
 })
-app.post("/reset-password",async(req,res)=>{
+app.post("/reset-password", async (req, res) => {
     try {
-        const {token,newPassword}=req.body;
+        const { token, newPassword } = req.body;
         if (!isStrongPassword(newPassword)) {
             return res.status(400).json({ message: "Password must be 8+ digits" });
         }
-        const user=await User.findOne({
-            resetToken:token,
-            resetTokenExpiry:{$gt:Date.now()}
+        const user = await User.findOne({
+            resetToken: token,
+            resetTokenExpiry: { $gt: Date.now() }
         });
-        if(!user){
-            return res.json({message:"Invalid or expired token"});
+        if (!user) {
+            return res.json({ message: "Invalid or expired token" });
         }
-        const hashed=await bcrypt.hash(newPassword,10);
-        user.password=hashed;
-        user.resetToken=null;
-        user.resetTokenExpiry=null;
+        const hashed = await bcrypt.hash(newPassword, 10);
+        user.password = hashed;
+        user.resetToken = null;
+        user.resetTokenExpiry = null;
         await user.save();
-        res.json({message:"Password reset successful"});
+        res.json({ message: "Password reset successful" });
     } catch (err) {
         res.status(500).json({ message: "Failed to reset password" });
     }
@@ -2143,9 +2148,9 @@ app.post("/profile/photo", requireAuth, async (req, res) => {
             { new: true }
         );
         io.emit("profilePhotoUpdated", {
-    email: updated.email,
-    photo: updated.photo
-});
+            email: updated.email,
+            photo: updated.photo
+        });
         res.json({ message: "Profile photo updated", user: sanitizeUser(updated) });
     } catch (err) {
         res.status(500).json({ message: "Failed to update profile photo" });
@@ -2356,7 +2361,7 @@ app.post("/api/backups", requireAuth, async (req, res) => {
         if (backupRecord) {
             backupRecord.status = "failed";
             backupRecord.error = err.message;
-            await backupRecord.save().catch(() => {});
+            await backupRecord.save().catch(() => { });
         }
         res.status(503).json({ message: "Cloud backup failed", error: err.message });
     }
@@ -2496,63 +2501,63 @@ app.post("/chat/restore", requireAuth, async (req, res) => {
         res.status(500).json({ message: "Failed to restore chat", error: err.message });
     }
 });
-app.post("/create-group",requireAuth,async(req,res)=>{
-    try{
-        const{name,members}=req.body;
+app.post("/create-group", requireAuth, async (req, res) => {
+    try {
+        const { name, members } = req.body;
 
-        const allMembers=[...new Set([...members,req.user.email])];
+        const allMembers = [...new Set([...members, req.user.email])];
 
-        const group=await Group.create({
+        const group = await Group.create({
             name,
-            members:allMembers,
-            admin:req.user.email
+            members: allMembers,
+            admin: req.user.email
         });
-        allMembers.forEach(member=>{
-            if(member===req.user.email) return;
+        allMembers.forEach(member => {
+            if (member === req.user.email) return;
             console.log("GROUP MEMBER:", member);
-        
-            const memberSockets=Object.keys(users).filter(id=>users[id]?.email===member);
-                console.log("MATCHED SOCKETS:", memberSockets);
-            memberSockets.forEach(id=>{
-                io.to(id).emit("addedToGroup",{
+
+            const memberSockets = Object.keys(users).filter(id => users[id]?.email === member);
+            console.log("MATCHED SOCKETS:", memberSockets);
+            memberSockets.forEach(id => {
+                io.to(id).emit("addedToGroup", {
                     group
                 });
             })
         })
-        res.json({group});
-    }catch(err){
-        res.status(500).json({message:err.message});
+        res.json({ group });
+    } catch (err) {
+        res.status(500).json({ message: err.message });
     }
 });
-app.post("/message/:id/star",requireAuth,async(req,res)=>{
-    try{
-        const message=await Message.findById(req.params.id);
-        if(!message){
+app.post("/message/:id/star", requireAuth, async (req, res) => {
+    try {
+        const message = await Message.findById(req.params.id);
+        if (!message) {
             return res.status(404).json({
-                message:"Message not found"
+                message: "Message not found"
             });
         }
-        message.starred=!message.starred;
+        message.starred = !message.starred;
         await message.save();
         res.json({
-            message:"Updated",
-            starred:message.starred
+            message: "Updated",
+            starred: message.starred
         });
-    }catch(err){
+    } catch (err) {
         res.status(500).json({
-            message:err.message
+            message: err.message
         });
     }
 })
-app.get("/messages/starred",requireAuth,async(req,res)=>{
-    try{
-        const messages=await Message.find({
-            $or:[
-                {from:req.user.email},
-                {to:req.user.email}
+app.get("/messages/starred", requireAuth, async (req, res) => {
+    try {
+        const messages = await Message.find({
+            $or: [
+                { from: req.user.email },
+                { to: req.user.email }
             ],
-            starred:true
-        }).sort({createdAt:-1});
+            starred: true
+        }).sort({ createdAt: -1 });
         res.json(messages.map(msg => ({
             _id: msg._id,
             from: msg.from,
@@ -2570,25 +2575,25 @@ app.get("/messages/starred",requireAuth,async(req,res)=>{
             forwarded: msg.forwarded,
             createdAt: msg.createdAt
         })));
-    }catch(err){
+    } catch (err) {
         res.status(500).json({
-            message:err.message
+            message: err.message
         });
     }
 })
-app.get("/groups",requireAuth,async(req,res)=>{
-    try{
-        const groups=await Group.find({
-            members:req.user.email
+app.get("/groups", requireAuth, async (req, res) => {
+    try {
+        const groups = await Group.find({
+            members: req.user.email
         });
         res.json(groups);
-    } catch(err){
-        res.status(500).json({message:err.message});
+    } catch (err) {
+        res.status(500).json({ message: err.message });
     }
 })
 //GET Group MeSSAGES
-app.get("/group-messages/:groupId",requireAuth,async(req,res)=>{
-    try{
+app.get("/group-messages/:groupId", requireAuth, async (req, res) => {
+    try {
         const group = await Group.findOne({
             _id: req.params.groupId,
             members: req.user.email
@@ -2598,63 +2603,63 @@ app.get("/group-messages/:groupId",requireAuth,async(req,res)=>{
         }
         //get group id from URL
         const deletedMessages = await DeletedMessage.find({
-    user: req.user.email
-});
+            user: req.user.email
+        });
 
-const deletedIds = deletedMessages.map(
-    item => item.messageId
-);
+        const deletedIds = deletedMessages.map(
+            item => item.messageId
+        );
 
-const messages = await Message.find({
+        const messages = await Message.find({
 
-    to: req.params.groupId,
+            to: req.params.groupId,
 
-    _id: {
-        $nin: deletedIds
-    }
+            _id: {
+                $nin: deletedIds
+            }
 
-}).sort({
-    createdAt: 1
-});//oldest first
+        }).sort({
+            createdAt: 1
+        });//oldest first
         //send messages
         res.json(messages);
-    }catch(err){
-       res.status(500).json(
-    messages.map(msg => ({
-        _id: msg._id,
-        from: msg.from,
-        to: msg.to,
-        message: msg.message,
+    } catch (err) {
+        res.status(500).json(
+            messages.map(msg => ({
+                _id: msg._id,
+                from: msg.from,
+                to: msg.to,
+                message: msg.message,
 
-        replyTo: msg.replyTo,
-        replyText: msg.replyText,
-        replySender: msg.replySender,
+                replyTo: msg.replyTo,
+                replyText: msg.replyText,
+                replySender: msg.replySender,
 
-        messageType: msg.messageType,
-        mediaUrl: msg.mediaUrl,
-        fileName: msg.fileName,
+                messageType: msg.messageType,
+                mediaUrl: msg.mediaUrl,
+                fileName: msg.fileName,
 
-        clientMessageId: msg.clientMessageId,
-        status: msg.status,
+                clientMessageId: msg.clientMessageId,
+                status: msg.status,
 
-        starred: msg.starred,
-        edited: msg.edited,
-        forwarded: msg.forwarded,
+                starred: msg.starred,
+                edited: msg.edited,
+                forwarded: msg.forwarded,
 
-        deletedForEveryone: msg.deletedForEveryone,
-        reactions: msg.reactions,
-        deletedAt: msg.deletedAt,
+                deletedForEveryone: msg.deletedForEveryone,
+                reactions: msg.reactions,
+                deletedAt: msg.deletedAt,
 
-        createdAt: msg.createdAt,
-        latitude: msg.latitude,
-        longitude: msg.longitude,
-        locationName: msg.locationName,
-        isLive: msg.isLive,
-        liveLocationId: msg.liveLocationId,
-        expiresAt: msg.expiresAt,
+                createdAt: msg.createdAt,
+                latitude: msg.latitude,
+                longitude: msg.longitude,
+                locationName: msg.locationName,
+                isLive: msg.isLive,
+                liveLocationId: msg.liveLocationId,
+                expiresAt: msg.expiresAt,
 
-    }))
-);
+            }))
+        );
     }
 })
 
@@ -2732,215 +2737,215 @@ app.get("/group/:groupId", requireAuth, async (req, res) => {
 
     }
 });
-app.post("/group/:groupId/leave",requireAuth,async(req,res)=>{
-    try{
-        const {groupId}=req.params;
-        const group=await Group.findById(groupId);
-        if(!group){
+app.post("/group/:groupId/leave", requireAuth, async (req, res) => {
+    try {
+        const { groupId } = req.params;
+        const group = await Group.findById(groupId);
+        if (!group) {
             return res.status(404).json({
-                message:"Group not found"
+                message: "Group not found"
             });
         }
         //Admin cannot leave
-        if(group.admin===req.user.email){
+        if (group.admin === req.user.email) {
             return res.status(400).json({
-                message:"Admin cannot leave the group"
+                message: "Admin cannot leave the group"
             });
         }
-        group.members=group.members.filter(
-            member=>member!==req.user.email
+        group.members = group.members.filter(
+            member => member !== req.user.email
         );
         await group.save();
-        const adminSockets=Object.keys(users).filter(
-            id=>users[id]?.email===group.admin
+        const adminSockets = Object.keys(users).filter(
+            id => users[id]?.email === group.admin
         );
-        adminSockets.forEach(id=>{
-            io.to(id).emit("groupMemberLeft",{
-                groupName:group.name,
-                member:req.user.email
+        adminSockets.forEach(id => {
+            io.to(id).emit("groupMemberLeft", {
+                groupName: group.name,
+                member: req.user.email
             });
         })
         res.json({
-            message:"Left group successfully"
+            message: "Left group successfully"
         });
 
-    }catch(err){
+    } catch (err) {
         res.status(500).json({
-            message:err.message
+            message: err.message
         });
     }
 })
-app.post("/group/:groupId/add-member",requireAuth,async(req,res)=>{
-    try{
-        const {groupId}=req.params;
-        const {email}=req.body;
-        const group=await Group.findById(groupId);
-        if(!group){
+app.post("/group/:groupId/add-member", requireAuth, async (req, res) => {
+    try {
+        const { groupId } = req.params;
+        const { email } = req.body;
+        const group = await Group.findById(groupId);
+        if (!group) {
             return res.status(404).json({
-                message:"Group not found"
+                message: "Group not found"
             });
         }
         //only admin can add members
-        if(group.admin!==req.user.email){
+        if (group.admin !== req.user.email) {
             return res.status(403).json({
-                message:"Only admin can add members"
+                message: "Only admin can add members"
             });
         }
         //Already exists
-        if(group.members.includes(email)){
+        if (group.members.includes(email)) {
             return res.status(400).json({
-                message:"User already in group"
+                message: "User already in group"
             });
         }
-       group.members.push(email);
-await group.save();
-
-const memberSockets = Object.keys(users).filter(
-    id => users[id]?.email === email
-);
-
-memberSockets.forEach(id => {
-    io.to(id).emit("addedToGroup", {
-        group
-    });
-});
-
-res.json({
-    message: "Member added successfully",
-    group
-});
-
-} catch (err) {
-    res.status(500).json({
-        message: err.message
-    });
-}
-});
-
-app.post("/group/:groupId/remove-member",requireAuth,async(req,res)=>{
-    try{
-        const {email}=req.body;
-        const group=await Group.findById(req.params.groupId);
-        if(!group){
-            return res.status(404).json({
-                message:"Group not found"
-            });
-        }
-        //Only admin can remove
-        if(group.admin!==req.user.email){
-            return res.status(403).json({
-                message:"Only admin can remove members"
-            });
-        }
-        //Admin can't remove themselves
-        if(email===group.admin){
-            return res.status(400).json({
-                message:"Admin cannot remove themselves"
-            });
-        }
-        group.members=group.members.filter(
-            member=>member!==email
-        );
+        group.members.push(email);
         await group.save();
-        //Notify removed user
-        const memberSockets=Object.keys(users).filter(
-            id=>users[id]?.email===email
+
+        const memberSockets = Object.keys(users).filter(
+            id => users[id]?.email === email
         );
-        memberSockets.forEach(id=>{
-            io.to(id).emit("removeFromGroup",{
-                groupId:group._id,
-                groupName:group.name
+
+        memberSockets.forEach(id => {
+            io.to(id).emit("addedToGroup", {
+                group
             });
         });
+
         res.json({
-            message:"Member removed successfully",
+            message: "Member added successfully",
             group
         });
 
-    }catch(error){
-         console.error(error);
+    } catch (err) {
         res.status(500).json({
-            message:error.message
+            message: err.message
+        });
+    }
+});
+
+app.post("/group/:groupId/remove-member", requireAuth, async (req, res) => {
+    try {
+        const { email } = req.body;
+        const group = await Group.findById(req.params.groupId);
+        if (!group) {
+            return res.status(404).json({
+                message: "Group not found"
+            });
+        }
+        //Only admin can remove
+        if (group.admin !== req.user.email) {
+            return res.status(403).json({
+                message: "Only admin can remove members"
+            });
+        }
+        //Admin can't remove themselves
+        if (email === group.admin) {
+            return res.status(400).json({
+                message: "Admin cannot remove themselves"
+            });
+        }
+        group.members = group.members.filter(
+            member => member !== email
+        );
+        await group.save();
+        //Notify removed user
+        const memberSockets = Object.keys(users).filter(
+            id => users[id]?.email === email
+        );
+        memberSockets.forEach(id => {
+            io.to(id).emit("removeFromGroup", {
+                groupId: group._id,
+                groupName: group.name
+            });
+        });
+        res.json({
+            message: "Member removed successfully",
+            group
+        });
+
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({
+            message: error.message
         });
     }
 })
-app.post("/group/:groupId/photo",requireAuth,async(req,res)=>{
-    try{
-        const {photo}=req.body;
-        const group=await Group.findById(req.params.groupId);
-        if(!group){
+app.post("/group/:groupId/photo", requireAuth, async (req, res) => {
+    try {
+        const { photo } = req.body;
+        const group = await Group.findById(req.params.groupId);
+        if (!group) {
             return res.status(404).json({
-                message:"Group not found"
+                message: "Group not found"
             });
         }
-        if(group.admin!==req.user.email){
+        if (group.admin !== req.user.email) {
             return res.status(403).json({
-                message:"Only admin can change group photo"
+                message: "Only admin can change group photo"
             });
         }
-        group.photo=photo;
+        group.photo = photo;
         await group.save();
         res.json({
-            message:"Group photo updated successfully",
-            photo:group.photo
+            message: "Group photo updated successfully",
+            photo: group.photo
         });
-     }catch(err){
+    } catch (err) {
         res.status(500).json({
-            message:err.message
+            message: err.message
         });
-     }
+    }
 })
-app.post("/archive",requireAuth,async(req,res)=>{
-    try{
-        const {chatId,chatType}=req.body;
-        const exists=await ArchivedChat.findOne({
-            user:req.user.email,
+app.post("/archive", requireAuth, async (req, res) => {
+    try {
+        const { chatId, chatType } = req.body;
+        const exists = await ArchivedChat.findOne({
+            user: req.user.email,
             chatId
         });
-        if(exists){
+        if (exists) {
             return res.json({
-                message:"Already archived"
+                message: "Already archived"
             });
         }
         await ArchivedChat.create({
-            user:req.user.email,
+            user: req.user.email,
             chatId,
             chatType
         });
         res.json({
-            message:"Archived successfully"
+            message: "Archived successfully"
         });
-    }catch(error){
+    } catch (error) {
         res.status(500).json({
-            message:error.message
+            message: error.message
         });
     }
 })
-app.post("/unarchive",requireAuth,async(req,res)=>{
-    try{
-        const {chatId}=req.body;
+app.post("/unarchive", requireAuth, async (req, res) => {
+    try {
+        const { chatId } = req.body;
         await ArchivedChat.deleteOne({
-            user:req.user.email,
+            user: req.user.email,
             chatId
         });
         res.json({
-            message:"Chat restored"
+            message: "Chat restored"
         });
-    }catch(err){
+    } catch (err) {
         res.status(500).json({
-            message:err.message
+            message: err.message
         });
     }
 })
-app.get("/archived",requireAuth,async(req,res)=>{
-    try{
-        const chats=await ArchivedChat.find({
-            user:req.user.email
+app.get("/archived", requireAuth, async (req, res) => {
+    try {
+        const chats = await ArchivedChat.find({
+            user: req.user.email
         });
         res.json(chats);
-    }catch(err){
+    } catch (err) {
         res.status(500).json({
-            message:err.message
+            message: err.message
         })
     }
 })

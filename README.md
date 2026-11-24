@@ -223,3 +223,6 @@ Contributions, issues, and feature requests are welcome!
 ## 📄 License
 
 This project is licensed under the **ISC License**. Feel free to use, modify, and distribute for personal or commercial projects.
+
+
+<!-- ShadowDeploy webhook verified at: 2026-11-24T17:14:49.161Z -->
